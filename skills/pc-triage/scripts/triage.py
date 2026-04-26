@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """pc-triage — group project-commander findings by urgency, recommend actions.
 
-Reads `project-commander --format json`, applies a fixed set of
+Reads `project-commander report --format json`, applies a fixed set of
 heuristics, prints a markdown action list grouped by urgency.
 
 Heuristics are deliberately stable so users can trust them; if you
@@ -56,7 +56,7 @@ def _run_pc(*, since: int | None, root: str | None) -> list[dict]:
 			file=sys.stderr,
 		)
 		sys.exit(2)
-	cmd = [pc, "--format", "json"]
+	cmd = [pc, "report", "--format", "json"]
 	if since is not None:
 		cmd.extend(["--since", str(since)])
 	if root:

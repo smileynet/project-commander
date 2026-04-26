@@ -76,7 +76,7 @@ Python ≥ 3.10. The only runtime dependency is
 ## First run
 
 ```sh
-project-commander
+project-commander report
 ```
 
 Walks `~/code`, reads your tool storage, prints the table. No
@@ -87,7 +87,7 @@ daemon, no cache, no config file.
 **Monday morning, no idea what's in flight.**
 
 ```sh
-project-commander --since 7
+project-commander report --since 7
 ```
 
 Filters to projects with any activity in the last 7 days. Dirty
@@ -97,7 +97,7 @@ plan and reality diverged — those are the ones you'd otherwise miss.
 **Coming back to a project after a break.**
 
 ```sh
-project-commander --project cdda_improved
+project-commander report --project cdda_improved
 ```
 
 The detail view answers four questions in this order: *What is this
@@ -108,7 +108,7 @@ whether to dive in or close the tab.
 **End-of-week status update.**
 
 ```sh
-project-commander --since 14 --format markdown > review.md
+project-commander report --since 14 --format markdown > review.md
 ```
 
 Substantive prompts are kept; bare approvals (`yes`, `proceed`) are
@@ -118,7 +118,7 @@ notes, not a chat log. Edit, share, archive.
 **Cleaning house in `~/code`.**
 
 ```sh
-project-commander | grep -E 'Dormant|Empty|Stub'
+project-commander report | grep -E 'Dormant|Empty|Stub'
 ```
 
 Things you forgot you started. The Evidence trail tells you why each
@@ -191,15 +191,18 @@ additional candidate skills (`pc-resume`, `pc-weekly`).
 ## Reference
 
 ```sh
-project-commander                          # all projects
-project-commander --since N                # only projects active in last N days
-project-commander --limit N                # cap to top N
-project-commander --project <glob>         # detail view (repeatable)
-project-commander --exclude <glob>         # hide matching folders (repeatable)
-project-commander --format json|markdown   # alternate output
-project-commander --disable <source>       # skip a source (repeatable)
-project-commander --root <path>            # scan somewhere other than ~/code
-project-commander --no-color               # plain output
+project-commander                                  # show subcommand help
+project-commander report                           # all projects
+project-commander report --since N                 # only projects active in last N days
+project-commander report --limit N                 # cap to top N
+project-commander report --project <glob>          # detail view (repeatable)
+project-commander report --exclude <glob>          # hide matching folders (repeatable)
+project-commander report --format json|markdown    # alternate output
+project-commander report --disable <source>        # skip a source (repeatable)
+project-commander report --root <path>             # scan somewhere other than ~/code
+project-commander report --no-color                # plain output
+
+project-commander tidy [--dry-run] [--sync] [--push] [--no-init] [--no-commit] [--stale-age N]
 ```
 
 ## Going deeper

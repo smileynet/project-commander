@@ -152,7 +152,7 @@ def _stale_commit_message(days: str, shortstat: str) -> str:
 		"",
 		"Auto-committed by project-commander because the working tree was",
 		f"dirty and the project had been quiet for {days} day(s). This is a",
-		"checkpoint, not curated work \u2014 review and reorganize as you see fit.",
+		"checkpoint, not curated work — review and reorganize as you see fit.",
 	]
 	if shortstat:
 		body.extend(["", shortstat])
@@ -331,11 +331,13 @@ def _last_mtime(project: Path) -> datetime | None:
 	return datetime.fromtimestamp(latest, tz=timezone.utc)
 
 
-# ---------- CLI ----------
+# ---------- subcommand wiring ----------
 
-def main(argv: list[str] | None = None) -> int:
-	parser = argparse.ArgumentParser(
-		prog="project-commander tidy",
+def add_subparser(subparsers) -> argparse.ArgumentParser:
+	"""Register the `tidy` subcommand on a parent ArgumentParser."""
+	parser = subparsers.add_parser(
+		"tidy",
+		help="Apply hygiene actions across ~/code.",
 		description="Project hygiene: init missing repos, checkpoint stale work, optionally sync.",
 	)
 	parser.add_argument("--root", type=Path, default=None,
@@ -357,8 +359,11 @@ def main(argv: list[str] | None = None) -> int:
 	parser.add_argument("--dry-run", action="store_true", default=False,
 						help="show planned actions without executing")
 	parser.add_argument("--no-color", action="store_true", default=False)
-	args = parser.parse_args(argv)
+	parser.set_defaults(func=run)
+	return parser
 
+
+def run(args: argparse.Namespace) -> int:
 	root = (args.root or Path.home() / "code").expanduser().resolve()
 	config = TidyConfig(
 		init=args.init,
@@ -440,7 +445,3 @@ def main(argv: list[str] | None = None) -> int:
 	# Exit code: nonzero if any failures
 	any_failed = any(not r.ok for r in results)
 	return 1 if any_failed else 0
-
-
-if __name__ == "__main__":
-	raise SystemExit(main())

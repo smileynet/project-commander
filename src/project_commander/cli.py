@@ -32,19 +32,7 @@ def _default_config(home: Path) -> dict:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    # Subcommand dispatch (kept lightweight to avoid breaking the existing
-    # flag surface). Flag-only invocations fall through to the report CLI.
-    incoming = list(argv) if argv is not None else sys.argv[1:]
-    if incoming and incoming[0] == "tidy":
-        from . import tidy
-        return tidy.main(incoming[1:])
-    if incoming and incoming[0] == "report":  # explicit; identical to default
-        incoming = incoming[1:]
-    parser = argparse.ArgumentParser(
-        prog="project-commander",
-        description="Survey ~/code projects by fusing git history, agent conversation logs, and plan docs.",
-    )
+def _add_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, default=None,
                         help="project root (default: ~/code)")
     parser.add_argument("--home", type=Path, default=Path.home(),
@@ -65,8 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable", action="append", default=[],
                         choices=["git", "claude", "gemini", "omp", "opencode", "kiro", "docs"],
                         help="skip a source (repeatable)")
-    args = parser.parse_args(incoming)
 
+
+def _run_report(args: argparse.Namespace) -> int:
     cfg = _default_config(args.home)
     code_root = (args.root or cfg["code_root"]).expanduser().resolve()
 
@@ -105,7 +94,6 @@ def main(argv: list[str] | None = None) -> int:
     console = Console(no_color=args.no_color, soft_wrap=False)
 
     if args.project:
-        # detail view, one section per matched project
         if args.format == "json":
             sys.stdout.write(report.render_json(reports) + "\n")
         elif args.format == "markdown":
@@ -123,6 +111,28 @@ def main(argv: list[str] | None = None) -> int:
     else:
         report.render_table(reports, console)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="project-commander",
+        description="Survey ~/code projects and apply hygiene actions.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True, metavar="{report,tidy}")
+
+    rp = sub.add_parser(
+        "report",
+        help="Survey ~/code by fusing git, agent history, and plan docs.",
+        description="Survey ~/code by fusing git, agent history, and plan docs.",
+    )
+    _add_report_args(rp)
+    rp.set_defaults(func=_run_report)
+
+    from . import tidy
+    tidy.add_subparser(sub)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
 
 
 if __name__ == "__main__":

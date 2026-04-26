@@ -21,48 +21,48 @@ install:
 
 # Quick fleet view, last 7 days, no color (good for piping/snapshots).
 smoke:
-	{{pc}} --since 7 --no-color | head -30
+	{{pc}} report --since 7 --no-color | head -30
 
 # Full fleet view to stdout (table).
 fleet:
-	{{pc}}
+	{{pc}} report
 
 # Fleet view in markdown to stdout.
 fleet-md:
-	{{pc}} --format markdown
+	{{pc}} report --format markdown
 
 # Detail view for one project.  Usage:  just detail NAME=foo
 detail NAME:
-	{{pc}} --project {{NAME}}
+	{{pc}} report --project {{NAME}}
 
 # Detail view for one project as markdown to stdout.  Usage:  just detail-md NAME=foo
 detail-md NAME:
-	{{pc}} --project {{NAME}} --format markdown
+	{{pc}} report --project {{NAME}} --format markdown
 
 # JSON dump of every project (full signals included).
 fleet-json:
-	{{pc}} --format json
+	{{pc}} report --format json
 
 # ---------- report files ----------
 
 # Write fleet + last-7-days reports to reports/ (gitignored).
 report:
 	@mkdir -p reports
-	{{pc}} --format markdown > reports/all-projects.md
-	{{pc}} --since 7 --format markdown > reports/last-7-days.md
+	{{pc}} report --format markdown > reports/all-projects.md
+	{{pc}} report --since 7 --format markdown > reports/last-7-days.md
 	@echo "wrote reports/all-projects.md  reports/last-7-days.md"
 
 # Write a project detail report.  Usage:  just report-detail NAME=foo
 report-detail NAME:
 	@mkdir -p reports
-	{{pc}} --project {{NAME}} --format markdown > reports/{{NAME}}.md
+	{{pc}} report --project {{NAME}} --format markdown > reports/{{NAME}}.md
 	@echo "wrote reports/{{NAME}}.md"
 
 # Regenerate the full report set used in docs/screenshots.
 publish:
 	@mkdir -p reports
-	{{pc}} --format markdown > reports/all-projects.md
-	{{pc}} --since 7 --format markdown > reports/last-7-days.md
+	{{pc}} report --format markdown > reports/all-projects.md
+	{{pc}} report --since 7 --format markdown > reports/last-7-days.md
 	@echo "wrote reports/"
 
 # ---------- tidy (hygiene actions) ----------

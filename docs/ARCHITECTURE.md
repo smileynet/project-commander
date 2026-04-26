@@ -78,9 +78,9 @@ below for the full vocabulary.
 Three views, same underlying data, different shapes.
 
 ```
-  $ project-commander                            →  fleet table (default)
-  $ project-commander --project cdda_*           →  per-project detail
-  $ project-commander --format json | markdown   →  structured / shareable
+  $ project-commander report                     →  fleet table (default)
+  $ project-commander report --project cdda_*           →  per-project detail
+  $ project-commander report --format json | markdown   →  structured / shareable
 ```
 
 | View | Best for |
@@ -316,15 +316,17 @@ Three behavioral guarantees:
 ## What you can ask for
 
 ```
-  project-commander                       all projects, sorted by recency
-  project-commander --since 7             only projects active in the last week
-  project-commander --limit 20            top 20 most-recent
-  project-commander --project cdda_*      detail view for matching folders
-  project-commander --exclude pi-*        hide noisy folders
-  project-commander --format json         structured output
-  project-commander --format markdown     shareable report
-  project-commander --disable kiro        skip a source you don't use
-  project-commander --root /other/path    scan somewhere other than ~/code
+  project-commander report                       all projects, sorted by recency
+  project-commander report --since 7             only projects active in the last week
+  project-commander report --limit 20            top 20 most-recent
+  project-commander report --project cdda_*      detail view for matching folders
+  project-commander report --exclude pi-*        hide noisy folders
+  project-commander report --format json         structured output
+  project-commander report --format markdown     shareable report
+  project-commander report --disable kiro        skip a source you don't use
+  project-commander report --root /other/path    scan somewhere other than ~/code
+
+  project-commander tidy [--dry-run] [--sync] [--push]
 ```
 
 `--project`, `--exclude`, `--disable` repeat. Globs are basename
