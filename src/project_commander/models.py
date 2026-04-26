@@ -57,6 +57,7 @@ class ProjectReport:
     git_branch: str | None = None
     git_dirty: bool = False
     is_git_repo: bool = False
+    observations: "object | None" = None  # populated by aggregator; observations.Observations
 
     @property
     def last_active(self) -> datetime | None:

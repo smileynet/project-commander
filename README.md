@@ -65,19 +65,51 @@ o**P**enCode, **K**iro, **D**ocs.
 Git column shows the current branch and a trailing `*` if the working tree is
 dirty.
 
-## How intent is determined
+## Observations: intent and progress
 
-Layered heuristic, never an LLM call:
+Raw signals (commits, prompts, plan docs) get folded into a per-project
+`Observations` record before rendering. The renderer reads from observations
+only — the heuristics live in one place.
 
-1. **Plan/intent doc** — first non-trivial paragraph from the
-   highest-priority doc (`PLAN.md` > `README.md` > `ROADMAP.md` > …).
-2. **Most recent prompt** — if no doc, the latest user prompt across all
-   conversation tools (within 30 days), prefixed `[active]`.
-3. **Most recent commit** — if neither, the most recent commit subject,
-   prefixed `[recent commit]`.
+**Intent** combines two layers:
 
-Evidence (which signals supplied the intent line, with dates) is included in
-detail view and JSON output.
+- `purpose` — what the project is for, taken from the highest-priority plan
+  doc (`PLAN.md` > `README.md` > `ROADMAP.md` > `NEXT_STEPS.md` >
+  `IMPROVEMENTS.md` > `AGENTS.md` > `TODO.md`).
+- `focus` — what's currently being worked on, distilled from the most recent
+  substantive user prompt (within 30 days). Prompts that are bare approvals
+  (`proceed`, `yes`, `continue`) flag `procedural-prompts` instead.
+
+The combined intent reads as `"<purpose> Currently: <focus>"` when both
+are available, falling back gracefully when only one signal is present.
+
+**Progress** is one of:
+
+| State | When |
+| --- | --- |
+| `Hot` | Touched today, prompts and commits both present |
+| `Active` | Touched within 7 days |
+| `Paused` | 7–30 days, dirty tree or unresolved prompts |
+| `Cooling` | 7–30 days, clean, low cadence |
+| `Idle` | 30–90 days |
+| `Dormant` | 90+ days |
+| `Shipped` | Recent commits + plan declares complete + no fresh prompts |
+| `Drifting` | Plan declares complete, but commits continue past it |
+| `Tracking` | Only upstream-style commits, no prompts |
+| `Stub` | Docs only, no commits or prompts |
+| `Empty` | No signals |
+
+Each state carries a one-line summary with concrete numbers (commits and
+prompts in 7-day and 30-day windows, distinct active days, etc.).
+
+**Flags** surface conditions that warrant attention: `dirty-tree`,
+`plan-drift`, `tool-cluster`, `upstream-only`, `no-docs`,
+`procedural-prompts`, `prompt-injection-detected`.
+
+**Evidence** is the audit trail — every claim in the report can be traced
+to the signals that backed it.
+
+No LLM calls. The report is fully reproducible from disk state.
 
 ## Architecture
 
@@ -88,7 +120,7 @@ src/project_commander/
 ├── paths.py           per-tool cwd → session-dir name encoding
 ├── models.py          Signal, ProjectReport
 ├── aggregator.py      run scanners in parallel, build reports
-├── intent.py          synthesize intent line + evidence
+├── observations.py    fold raw signals into per-project Observations
 ├── report.py          rich table / markdown / json rendering
 └── sources/
     ├── git.py

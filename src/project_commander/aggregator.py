@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
-from . import intent as intent_mod
+from . import observations as observations_mod
 from .models import ProjectReport, Signal
 from .sources.git import GitScanner
 
@@ -42,7 +42,10 @@ def build_report(project: Path,
         path=project, name=project.name, signals=signals,
         is_git_repo=is_repo, git_branch=branch, git_dirty=dirty,
     )
-    report.intent, report.intent_evidence = intent_mod.detect(report)
+    obs = observations_mod.build(report)
+    report.observations = obs
+    report.intent = obs.intent
+    report.intent_evidence = list(obs.evidence)
     return report
 
 
