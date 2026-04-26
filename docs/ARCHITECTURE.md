@@ -417,16 +417,202 @@ reading the Dolt database directly only if the CLI is unavailable
 
 Single-letter flag: **`B`** for `bd` in the `Sources` column.
 
-### Other candidates worth considering
+### Tier 1 — same-shape scanners (next to implement)
+
+Each reads its own per-project storage and emits prompts / sessions /
+doc-edit signals exactly the way the existing seven do. No new
+`SignalKind` required.
 
 ```
-  GitHub issues / PRs        per-project remote API; needs auth + rate-limit
-  Linear / Jira              org-level trackers; per-project filter required
-  shell history              ~/.zsh_history grep for `cd <project>` jumps
-  filesystem activity        recent file mtimes outside git history
-  test-run history           pytest/jest cache files indicate "last test run"
+  Codex CLI (OpenAI)
+  ──────────────────
+  Anchor:  ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+           First event is `session_meta` with `payload.cwd`, branch,
+           commit. ~/.codex/history.jsonl indexes per-prompt {ts, text}.
+  Adds:    Codex sessions where Claude/Gemini/OMP/OpenCode were not used.
+  Flag:    X  (Co**X** — `C` is taken)
+  Source:  rollout file format observed locally; structure stable across
+           cli_version 0.118.x.
+
+  Cursor (Anysphere)
+  ──────────────────
+  Anchor:  ~/.cursor/projects/<encoded-cwd>/agent-transcripts/*.{json,txt}
+           Same `/`→`-` keying as Claude Code. Also chat SQLite at
+           ~/.cursor/chats/<hash>/<uuid>/store.db.
+  Adds:    In-IDE agent activity that no CLI scanner sees. Validates
+           `tool-cluster` more aggressively when Cursor + a CLI agent
+           both touched the same project.
+  Flag:    R  (cu**R**sor — `C` is taken)
+
+  JetBrains family
+  ────────────────
+  Anchor:  ~/.config/JetBrains/<IDE>/options/recentProjects.xml
+           One file per IDE (PyCharm, IntelliJ, Rider, RustRover,
+           WebStorm, ...). Each entry: `key=$USER_HOME$/code/<name>`,
+           `activationTimestamp` in epoch-ms.
+  Adds:    'Last opened in an IDE' signal — orthogonal to commits and
+           prompts. Catches projects you read in the IDE without typing
+           at an agent.
+  Flag:    J
+
+  Aider
+  ─────
+  Anchor:  <project>/.aider.input.history (timestamped, one prompt per
+           line with `# YYYY-MM-DD HH:MM:SS.ffffff` markers)
+           <project>/.aider.chat.history.md
+  Adds:    A widely-used CLI agent the existing scanners do not cover.
+           Files live in the repo root, so cwd binding is trivial.
+  Flag:    A
+  Source:  https://aider.chat/docs/config/options.html
+
+  Cline (VSCode extension `saoudrizwan.claude-dev`)
+  ─────────────────────────────────────────────────
+  Anchor:  ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/
+             tasks/<taskId>/{api_conversation_history.json,
+                             ui_messages.json, task_metadata.json}
+           Resolve task→workspace via
+             state/taskHistory.json  (HistoryItem.workspacePath)
+  Adds:    The major in-IDE Claude agent for VSCode users.
+           `task_metadata.json` includes `files_in_context` and
+           `model_usage` — richer focus inference than prompts alone.
+  Flag:    L  (c**L**ine)
+  Caution: Task dirs can grow to many GB. Stat metadata only; never
+           read full conversation files.
+  Source:  https://github.com/cline/cline (see core/storage/disk.ts)
+
+  Continue.dev
+  ────────────
+  Anchor:  ~/.continue/sessions/sessions.json (index — every entry has
+           an explicit `workspaceDirectory` field, no path mangling)
+           ~/.continue/sessions/<sessionId>.json (per-session)
+           Honor $CONTINUE_GLOBAL_DIR override.
+  Adds:    Cross-IDE agent (ships VSCode + JetBrains extensions). The
+           index file gives every session keyed by project in one read.
+  Flag:    N  (co**N**tinue)
+  Source:  https://github.com/continuedev/continue (core/util/paths.ts,
+           core/util/history.ts)
 ```
 
-The bar for inclusion is the same as the existing seven: a clean
-per-project key, structured timestamps, and a story the renderer
-can tell that the existing sources cannot.
+### Tier 2 — filesystem signals (new `kind`s)
+
+These aren't prompts or commits — they're proxies for *engagement*
+fingerprinted by mtime or running state. Each adds a new `SignalKind`
+so the observations layer must decide how to weight it.
+
+```
+  Test / lint / typecheck cache cluster        kind: "toolrun"
+  ───────────────────────────────────────
+  Anchors: <project>/.pytest_cache/v/cache/lastfailed
+           <project>/.pytest_cache/v/cache/nodeids
+           <project>/.ruff_cache/  .mypy_cache/  .tox/
+  Adds:    Distinguishes 'edited but never re-ran tests' from
+           'iterating in a tight test/fix loop'. Mtime read; no parsing.
+  Source:  https://docs.pytest.org/en/stable/how-to/cache.html
+
+  VSCode workspaceStorage mtime               kind: "editor_open"
+  ─────────────────────────────────
+  Anchor:  ~/.config/Code/User/workspaceStorage/<md5(abspath+inode)>/
+           Linux uses inode; macOS/Win uses birthtime ms. Hash is
+           computed on demand from the project path — no scanning.
+           Read directory mtime as 'last opened in VSCode'; do NOT
+           parse state.vscdb (schema unstable).
+  Adds:    The peer of the JetBrains scanner for VSCode users.
+  Source:  https://github.com/microsoft/vscode (resourceIdentity-
+           ServiceImpl.ts) — hash recipe documented there.
+
+  Lockfile mtimes                              kind: "deps_updated"
+  ───────────────
+  Anchors: <project>/{uv.lock, poetry.lock, requirements.lock,
+                       package-lock.json, pnpm-lock.yaml, yarn.lock,
+                       Cargo.lock, flake.lock, Gemfile.lock, go.sum,
+                       Pipfile.lock, pixi.lock}
+  Adds:    'Dependencies last touched N days ago' — a proxy for
+           toolchain churn distinct from code commits.
+  Note:    Mtime only. Reading lock contents is out of scope.
+
+  Devcontainer / Codespace marker              kind: "portable_env"
+  ────────────────────────────────
+  Anchor:  <project>/.devcontainer/devcontainer.json or
+           <project>/.devcontainer.json
+  Adds:    'This project ships a reproducible env' — strong signal
+           that the repo is meant to be used by others or by you on
+           multiple machines. Mtime is last toolchain-update.
+  Source:  https://containers.dev/implementors/spec/
+
+  Docker Compose runtime state                 kind: "container"
+  ────────────────────────────
+  Anchor:  Local marker at <project>/{compose.yaml,docker-compose.yml}.
+           Live state via
+             docker ps -a --filter \
+               label=com.docker.compose.project=<basename> \
+               --format json
+           Containers carry `com.docker.compose.project.working_dir`
+           with the absolute path that started them.
+  Adds:    'This project has live services right now' — no other
+           scanner can infer this. Container CreatedAt + StartedAt
+           are precise activity timestamps.
+  Caution: Project name defaults to basename but can be overridden by
+           `-p`, COMPOSE_PROJECT_NAME env, or `name:` in compose file.
+  Source:  https://docs.docker.com/compose/how-tos/project-name/
+```
+
+### Tier 3 — remote enrichment (auth required)
+
+```
+  GitHub Actions run history
+  ──────────────────────────
+  Anchor:  Local: <project>/.github/workflows/ + git remote origin URL
+           Remote: gh run list -R <owner>/<repo> --json \
+                       conclusion,createdAt,headBranch,status,workflowName
+  Adds:    'CI red on main since 3 days' — distinguishes Shipped-and-
+           green from Shipped-but-broken.
+  Caution: Requires `gh` installed + authenticated. Rate-limited.
+           Fail-soft on auth issues.
+  Source:  https://cli.github.com/manual/gh_run_list
+
+  GitHub issues / PRs (open count, recent activity)
+  Linear / Jira (per-project filter required)
+  Roo Code (Cline fork — same scanner with swapped extension ID)
+```
+
+### Categories explicitly considered but not yet listed
+
+These were evaluated and rejected for now. Reasons noted so the
+thinking is captured:
+
+- **Shell history (`~/.zsh_history`)** — `cd <project>` lines exist
+  but signal is noisy (typos, aborted jumps) and a privacy concern
+  to scan by default.
+- **direnv allow-list (`~/.local/share/direnv/allow/`)** — only fires
+  on `cd` after explicit allow; correlates with `.envrc` presence
+  which would already be picked up by the lockfile-mtime cluster.
+- **Tool-version files (`.python-version`, `.nvmrc`, `.tool-versions`,
+  `.mise.toml`)** — adoption markers but no timestamp story beyond
+  mtime; subsumed by lockfile-mtime tracking.
+- **Sourcegraph Cody, GitHub Copilot Chat (VSCode)** — chat history
+  in opaque SQLite (`state.vscdb`) with unstable schema; the VSCode
+  workspaceStorage-mtime signal already captures the engagement
+  proxy without parsing fragile internals.
+- **Zed agent panel** — threads live in SQLite keyed by internal
+  `worktree_id`; per-project resolution requires a join against
+  Zed's own worktree table. Re-evaluate when the schema stabilizes.
+
+### The bar for inclusion
+
+Same as the existing seven:
+
+```
+  1.  Discoverable per-project anchor (file or directory pattern).
+  2.  Time-stamped events (or mtime as proxy for engagement).
+  3.  Tells a story the existing sources cannot tell on their own.
+  4.  Either fully offline, or fail-soft when auth/network is absent.
+```
+
+Prior art surveyed: [`mr` (myrepos)](https://myrepos.branchable.com/),
+[`gita`](https://github.com/nosarthur/gita),
+[`ghq`](https://github.com/x-motemen/ghq),
+[`lazygit` recent-repos](https://github.com/jesseduffield/lazygit),
+[GitHub Pulse](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/using-pulse-to-view-a-summary-of-repository-activity),
+and [`chops`](https://github.com/Shpigford/chops) (a multi-agent
+dashboard with the same scanner-fanout shape, useful as a cross-check
+for which agent storage paths the community considers worth scanning).
