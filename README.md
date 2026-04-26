@@ -133,7 +133,11 @@ src/project_commander/
 ```
 
 Each source implements `scan(project: Path) -> list[Signal]`. The aggregator
-fans out across projects with a thread pool — every scanner is I/O-bound.
+fans out across projects with a thread pool \u2014 every scanner is I/O-bound.
+
+For a full walkthrough \u2014 the runtime task graph, data shapes, observation
+heuristics, and the per-tool path-key conventions \u2014 see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Adding a new source
 
