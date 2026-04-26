@@ -140,7 +140,10 @@ def _run_report(args: argparse.Namespace) -> int:
     if args.format == "json":
         sys.stdout.write(report.render_json(reports) + "\n")
     elif args.format == "markdown":
-        sys.stdout.write(report.render_markdown(reports))
+        if args.since is not None and args.since <= 30:
+            sys.stdout.write(report.render_review_markdown(reports, since_days=args.since))
+        else:
+            sys.stdout.write(report.render_markdown(reports))
     elif args.since is not None and args.since <= 30:
         report.render_review(reports, since_days=args.since, console=console)
     else:

@@ -22,8 +22,8 @@ src/project_commander/
 │                     clean_doc_prose, first_sentence, build()
 ├── tidy.py           hygiene subcommand: init / commit-stale / fetch / push
 ├── report.py         render_table (grouped fleet) / render_review (period digest) /
-│                     render_detail / render_detail_markdown /
-│                     render_json / render_markdown
+│                     render_review_markdown / render_detail /
+│                     render_detail_markdown / render_json / render_markdown
 └── sources/
     ├── base.py       SourceScanner protocol (just `scan(project) -> list[Signal]`)
     ├── git.py        subprocess git log
@@ -56,8 +56,8 @@ ProjectReport  per-project, all signals folded in       models.ProjectReport
    │           branch, dirty flag, signals[], last_active
    ▼
 Observations   per-project, interpreted                 observations.Observations
-               progress enum, intent text, flags, evidence,
-               7d/30d/90d activity windows
+               progress enum, intent/workstream/attention text,
+               flags, evidence, 7d/30d/90d activity windows
 ```
 
 | Layer | Reads | Produces | Has business logic? |

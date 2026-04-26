@@ -146,8 +146,8 @@ Three views, same underlying data, different shapes.
 | View | Best for |
 |---|---|
 | **Fleet table** | *"Which projects am I active on, and what was I doing?"* — one row per project, sorted by recency. |
-| **Project detail** | *"Show me the receipts for one project"* — full audit trail with progress summary, purpose, focus, flags, evidence, activity stats, and recent commits / prompts / sessions / plan-doc edits. |
-| **JSON / markdown** | Scripting downstream, or sharing a static report. JSON includes both the interpreted observations and the raw signals. |
+| **Project detail** | *"What was this work really about, what is unresolved, and where do I resume?"* — full audit trail with workstream, attention, outstanding, next step, and recent commits / prompts / sessions / plan-doc edits. |
+| **JSON / markdown** | Scripting downstream, or sharing a static report. Plain markdown stays tabular by default, but `--since N` now switches markdown into the same review-digest JTBD as the terminal output. JSON includes both the interpreted observations and the raw signals. |
 
 ## How signals fuse into a report
 
@@ -182,13 +182,15 @@ observations layer interprets them, and a renderer prints them.
                                                                     │
                                                                     ▼
                                                          ┌──────────────────────┐
-                                                         │     Observations     │
-                                                         │  ──  progress (enum) │
-                                                         │  ──  purpose / focus │
-                                                         │  ──  intent          │
-                                                         │  ──  flags           │
-                                                         │  ──  evidence        │
-                                                         │  ──  7d/30d/90d      │
+│     Observations     │
+│  ──  progress (enum) │
+│  ──  purpose / focus │
+│  ──  workstream      │
+│  ──  attention       │
+│  ──  intent          │
+│  ──  flags           │
+│  ──  evidence        │
+│  ──  7d/30d/90d      │
                                                          └──────────┬───────────┘
                                                                     │
                                             ┌───────────────────────┼───────────────────────┐
@@ -238,6 +240,16 @@ the project takes the purpose slot:
 "Substantive" means *not* a one-word approval. Procedural prompts
 (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`)
 are filtered out and surfaced separately as a flag — see below.
+
+
+## Workstream + Attention: the hidden-value synthesis
+
+The detail view now lifts two extra lines above the raw audit trail:
+
+- **Workstream** — the best current line-of-work summary, preferring a recent plan-like doc (`PLAN`, `NEXT_STEPS`, `.sisyphus/plans/...`, etc.) over a generic README blurb.
+- **Attention** — why you should care *now*, expressed as the unresolved story behind the repo state: dirty tree + stalled thread, plan drift, unpushed commits, no-git activity, and similar synthesis that is not obvious from `git status` alone.
+
+This is the JTBD boundary: branch name, dirty count, and recent commits are still shown, but as evidence. The headline job is to answer *"what was this work really about, what is unresolved, and where do I resume?"* before you start scrolling through raw history.
 
 ## Progress: where the project is in its lifecycle
 
@@ -397,9 +409,7 @@ Each section answers a different question:
 - **New this period** — *what's new?* projects whose first observed
   commit landed inside the window
 
-Each section caps at 12 rows with `… +N more` overflow. JSON and
-markdown output formats keep the flat fleet shape regardless of
-`--since` so downstream consumers stay simple.
+Each section caps at 12 rows with `… +N more` overflow. JSON stays flat for downstream consumers; markdown now follows the digest shape too when `--since N` is used, so the shareable artifact answers the same Monday-morning triage questions as the terminal view.
 
 
 ## Evidence: every claim is auditable

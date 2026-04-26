@@ -94,6 +94,37 @@ def render_review(reports: Iterable[ProjectReport], *, since_days: int, console:
 		console.print("  [dim](nothing moved, nothing parked, nothing flagged)[/dim]")
 
 
+def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int) -> str:
+	"""Markdown week-in-review digest tuned for cross-project triage."""
+	rows = list(reports)
+	now = datetime.now(tz=timezone.utc)
+	cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+	from datetime import timedelta
+	cutoff = cutoff - timedelta(days=since_days)
+	sections = [
+		("Moved forward", _section_moved_forward(rows, cutoff=cutoff), "moved"),
+		("Parked dirty (decide)", _section_parked_dirty(rows), "parked"),
+		("Flagged", _section_flagged(rows), "flagged"),
+		("New this period", _section_new_this_period(rows, cutoff=cutoff), "new"),
+	]
+	lines = [f"# Last {since_days} day(s)", "", f"_Since {cutoff.date().isoformat()}_", ""]
+	if not any(items for _, items, _ in sections):
+		lines.append("_Nothing moved, nothing parked, nothing flagged._")
+		return "\n".join(lines).rstrip() + "\n"
+	lookup = {r.name: r for r in rows}
+	for title, items, kind in sections:
+		if not items:
+			continue
+		lines.append(f"## {title} ({len(items)})")
+		lines.append("")
+		for row in items[:_REVIEW_SECTION_CAP]:
+			lines.extend(_review_markdown_entry(kind, row, lookup.get(row[0])))
+		if len(items) > _REVIEW_SECTION_CAP:
+			lines.append(f"- _… +{len(items) - _REVIEW_SECTION_CAP} more_")
+		lines.append("")
+	return "\n".join(lines).rstrip() + "\n"
+
+
 def render_detail(report: ProjectReport, console: Console) -> None:
 	obs = report.observations
 	console.rule(f"[bold cyan]{report.name}")
@@ -105,13 +136,19 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 		console.print(f"[bold]Intent:[/bold] {report.intent or '(none)'}")
 		return
 
-	console.print(f"[bold]Progress:[/bold] {_progress_text(obs)} \u2014 {obs.progress_summary}")
-	if obs.purpose:
-		console.print(f"[bold]Purpose:[/bold] {first_sentence(obs.purpose, limit=_PURPOSE_LIMIT)}")
+	console.print(f"[bold]Progress:[/bold] {_progress_text(obs)} — {obs.progress_summary}")
+	workstream = _truncate(_oneline(obs.workstream), limit=_FOCUS_LIMIT) if obs.workstream else ""
+	purpose = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
+	if workstream:
+		console.print(f"[bold]Workstream:[/bold] {workstream}")
+	if obs.attention:
+		console.print(f"[bold]Attention:[/bold] {_truncate(_oneline(obs.attention), limit=220)}")
 	if obs.focus:
-		console.print(f"[bold]Focus:[/bold] {_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT)}")
+		console.print(f"[bold]Current thread:[/bold] {_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT)}")
 	else:
-		console.print("[bold]Focus:[/bold] [dim](no recent prompts)[/dim]")
+		console.print("[bold]Current thread:[/bold] [dim](no recent prompts)[/dim]")
+	if purpose and _oneline(purpose) != _oneline(workstream):
+		console.print(f"[bold]Purpose:[/bold] {purpose}")
 	if obs.last_action:
 		when = _fmt_last_active(obs.last_action_at)
 		console.print(f"[bold]Last action:[/bold] {_oneline(obs.last_action)} [dim]({when}, {obs.last_action_source})[/dim]")
@@ -119,9 +156,8 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 		console.print("[bold]Flags:[/bold] " + " ".join(f"[yellow]{f}[/yellow]" for f in obs.flags))
 	w7, w30 = obs.window_7d, obs.window_30d
 	console.print(
-		f"[dim]Activity: 7d \u2192 {w7.commits}c / {w7.prompts}p across {w7.distinct_days} day(s); "
-		f"30d \u2192 {w30.commits}c / {w30.prompts}p[/dim]"
-	)
+		f"[dim]Activity: 7d → {w7.commits}c / {w7.prompts}p across {w7.distinct_days} day(s); "
+		f"30d → {w30.commits}c / {w30.prompts}p[/dim]"	)
 	if obs.evidence:
 		console.print("[dim]Evidence: " + "; ".join(obs.evidence) + "[/dim]")
 	console.print()
@@ -149,10 +185,11 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	# Pick up where you left off — synthesized handoff at the very top.
 	if obs is not None:
 		lines.append("> **Pick up where you left off.**  ")
-		lines.append(f"> **State:** {progress_label(obs.progress)} \u00b7 {_fmt_last_active(report.last_active)}.  ")
-		you_were = obs.focus or obs.last_action
-		if you_were:
-			lines.append(f"> **You were:** {_md_safe(_truncate(_oneline(you_were), limit=160))}.  ")
+		lines.append(f"> **State:** {progress_label(obs.progress)} · {_fmt_last_active(report.last_active)}.  ")
+		if obs.workstream:
+			lines.append(f"> **Workstream:** {_md_safe(_truncate(_oneline(obs.workstream), limit=180))}  ")
+		if obs.attention:
+			lines.append(f"> **Attention:** {_md_safe(_truncate(_oneline(obs.attention), limit=200))}  ")
 		out_summary = _outstanding_one_line(obs.outstanding)
 		if out_summary:
 			lines.append(f"> **Outstanding:** {out_summary}.  ")
@@ -164,7 +201,7 @@ def render_detail_markdown(report: ProjectReport) -> str:
 
 	lines.append(f"- **Last active:** {_fmt_last_active(report.last_active)}")
 	if obs is not None:
-		lines.append(f"- **Progress:** {progress_label(obs.progress)} \u2014 {obs.progress_summary}")
+		lines.append(f"- **Progress:** {progress_label(obs.progress)} — {obs.progress_summary}")
 	lines.append(f"- **Git:** {_fmt_git(report, plain=True) or _DASH}")
 	lines.append(f"- **Sources:** {_fmt_sources(report)}")
 	if obs is not None and obs.flags:
@@ -172,21 +209,33 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	lines.append("")
 
 	if obs is not None:
-		if obs.purpose:
-			lines.append("## Purpose")
+		workstream = _truncate(_oneline(obs.workstream), limit=220) if obs.workstream else ""
+		purpose = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
+		if workstream:
+			lines.append("## Workstream")
 			lines.append("")
-			lines.append(first_sentence(obs.purpose, limit=_PURPOSE_LIMIT))
+			lines.append(_md_safe(workstream))
 			lines.append("")
 		if obs.focus:
-			lines.append("## Currently")
+			lines.append("## Current thread")
 			lines.append("")
-			lines.append(_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT))
+			lines.append(_md_safe(_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT)))
+			lines.append("")
+		if purpose and _oneline(purpose) != _oneline(workstream):
+			lines.append("## Purpose")
+			lines.append("")
+			lines.append(_md_safe(purpose))
+			lines.append("")
+		if obs.attention:
+			lines.append("## Attention now")
+			lines.append("")
+			lines.append(_md_safe(_truncate(_oneline(obs.attention), limit=220)))
 			lines.append("")
 		if obs.last_action:
 			when = _fmt_last_active(obs.last_action_at)
 			lines.append(
 				f"**Last action:** {_oneline(obs.last_action)}  "
-				f"<sub>{when} \u00b7 `{obs.last_action_source}`</sub>"
+				f"<sub>{when} · `{obs.last_action_source}`</sub>"
 			)
 			lines.append("")
 
@@ -283,6 +332,9 @@ def render_json(reports: Iterable[ProjectReport]) -> str:
 				"purpose": obs.purpose,
 				"focus": obs.focus,
 				"intent": obs.intent,
+				"workstream": obs.workstream,
+				"recent_changes": obs.recent_changes,
+				"attention": obs.attention,
 				"progress": obs.progress.value,
 				"progress_label": progress_label(obs.progress),
 				"progress_summary": obs.progress_summary,
@@ -419,7 +471,7 @@ def _section_moved_forward(rows: Sequence[ProjectReport], *, cutoff: datetime) -
 		              and not is_procedural(s.summary))
 		if commits == 0 and prompts == 0:
 			continue
-		focus = obs.focus or obs.last_action or obs.purpose
+		focus = obs.recent_changes or obs.workstream or obs.focus or obs.last_action or obs.purpose
 		out.append((r.name, f"{commits}c {prompts}p", _truncate(_oneline(focus or ''), limit=80)))
 	out.sort(key=lambda t: -(int(t[1].split('c')[0]) + int(t[1].split('c')[1].split('p')[0])))
 	return out
@@ -486,7 +538,7 @@ def _section_new_this_period(rows: Sequence[ProjectReport], *, cutoff: datetime)
 		if first.timestamp < cutoff:
 			continue
 		when = first.timestamp.strftime("%a")
-		focus = obs.focus or obs.last_action or obs.purpose
+		focus = obs.recent_changes or obs.workstream or obs.focus or obs.last_action or obs.purpose
 		out.append((r.name, f"first {when}", _truncate(_oneline(focus or ''), limit=80)))
 	return out
 
@@ -506,6 +558,43 @@ def _print_review_section(console: Console, title: str, rows: list[tuple], *, co
 		console.print(f"  [cyan]{name:<30}[/cyan] [yellow]{col2:<14}[/yellow] [dim]{col3}[/dim]")
 	if count > _REVIEW_SECTION_CAP:
 		console.print(f"  [dim]\u2026 +{count - _REVIEW_SECTION_CAP} more[/dim]")
+
+
+def _review_arc(report: ProjectReport | None) -> str:
+	if report is None or report.observations is None:
+		return ""
+	obs = report.observations
+	for text in (obs.recent_changes, obs.workstream, obs.focus, obs.last_action, obs.purpose):
+		if text:
+			return _truncate(_oneline(text), limit=200)
+	return ""
+
+
+def _review_attention(report: ProjectReport | None) -> str:
+	if report is None or report.observations is None or not report.observations.attention:
+		return ""
+	return _truncate(_oneline(report.observations.attention), limit=220)
+
+
+def _review_markdown_entry(kind: str, row: tuple, report: ProjectReport | None) -> list[str]:
+	name = _md_safe(str(row[0]))
+	lines: list[str] = []
+	if kind in ("moved", "new") and len(row) >= 2:
+		lines.append(f"- **{name}** — {row[1]}")
+	elif kind == "parked" and len(row) >= 3:
+		lines.append(f"- **{name}** — {row[1]}, {row[2]}")
+	elif kind == "flagged" and len(row) >= 2:
+		detail = f": {_md_safe(str(row[2]))}" if len(row) >= 3 and row[2] else ""
+		lines.append(f"- **{name}** — {row[1]}{detail}")
+	else:
+		lines.append(f"- **{name}**")
+	arc = _review_arc(report)
+	if arc:
+		lines.append(f"  - Arc: {_md_safe(arc)}")
+	attention = _review_attention(report)
+	if attention:
+		lines.append(f"  - Attention: {_md_safe(attention)}")
+	return lines
 
 
 # ───── detail-view sub-blocks ────────────────────────────────────────────────

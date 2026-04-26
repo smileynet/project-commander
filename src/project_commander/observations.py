@@ -216,6 +216,9 @@ class Observations:
     purpose: str = ""           # the project's stated identity (from doc)
     focus: str = ""             # what's being asked of agents right now
     intent: str = ""            # composed user-facing intent statement
+    workstream: str = ""        # synthesized current line of work
+    recent_changes: str = ""    # what landed recently, condensed from commit subjects
+    attention: str = ""         # why this project needs a decision / review now
     progress: Progress = Progress.EMPTY
     progress_summary: str = ""  # human one-liner for the progress state
     last_action: str = ""       # what the project last accomplished
@@ -275,6 +278,25 @@ _INJECTION_RE = re.compile(
 )
 
 
+_WORKSTREAM_DOC_DAYS = 14
+_RECENT_CHANGES_DAYS = 7
+_COMMIT_TAG_RE = re.compile(r"^\[[^\]]+\]\s*")
+_CONVENTIONAL_PREFIX_RE = re.compile(
+    r"^(?:feat|fix|docs|chore|refactor|test|perf|build|ci|style)(?:\([^)]+\))?!?:\s*",
+    re.IGNORECASE,
+ )
+_LEADING_VERB_RE = re.compile(
+    r"^(?:add|collect|fix|update|improve|rewrite|disable|create|implement|review|switch|use|wire|split|extract|rename|clean|stabilize)\s+",
+    re.IGNORECASE,
+ )
+_TOPIC_STOPWORDS = {
+    "a", "an", "and", "for", "from", "in", "into", "of", "on", "or", "the", "to",
+    "with", "without", "using", "via", "after", "before", "across", "through", "this", "that",
+    "these", "those", "more", "additional", "still", "again",
+}
+_SUMMARY_PREFIX_RE = re.compile(r"^\s*(?:quick summary|summary)\s*:\s*", re.IGNORECASE)
+
+
 def build(report: ProjectReport, *, now: datetime | None = None) -> Observations:
     """Compute observations from a `ProjectReport`."""
     now = now or datetime.now(tz=timezone.utc)
@@ -308,6 +330,13 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
 
     intent = _compose_intent(purpose, focus, focus_kind, last_action, progress)
     outstanding = _build_outstanding(report, sigs, now=now)
+    recent_changes = _recent_changes_summary(sigs, now=now)
+    workstream = _workstream_summary(
+        sigs, now=now, purpose=purpose, focus=focus, focus_kind=focus_kind,
+        last_action=last_action, recent_changes=recent_changes,
+    )
+    attention = _attention_summary(report, outstanding=outstanding,
+                                   drift_count=drift_count, drift_doc=drift_doc)
     next_action = _next_action(report, progress, outstanding=outstanding,
                                drift_count=drift_count, drift_doc=drift_doc,
                                focus_kind=focus_kind)
@@ -327,6 +356,9 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
         purpose=purpose,
         focus=focus,
         intent=intent,
+        workstream=workstream,
+        recent_changes=recent_changes,
+        attention=attention,
         progress=progress,
         progress_summary=progress_summary,
         last_action=last_action,
@@ -398,6 +430,169 @@ def _last_concrete_action(sigs: Iterable[Signal]) -> tuple[str, datetime | None,
     else:
         summary = _trim(best.summary, 180)
     return summary, best.timestamp, f"{best.source}:{best.kind}"
+
+
+def _planning_doc_score(ref: str) -> int:
+    name = (ref or "").lower()
+    base = name.rsplit("/", 1)[-1]
+    if "/plans/" in name or "plan" in base:
+        return 100
+    if "next_steps" in base or "next-steps" in base or base == "next.md" or "next" in base:
+        return 90
+    if "roadmap" in base:
+        return 85
+    if "todo" in base:
+        return 80
+    if "improvement" in base:
+        return 78
+    return 0
+
+
+def _split_doc_signal(s: Signal) -> tuple[str, str]:
+    ref = s.ref or "doc"
+    body = s.summary
+    if body.startswith("["):
+        end = body.find("] ")
+        if end != -1:
+            body = body[end + 2 :]
+    return ref, body
+
+
+def _planning_doc_summary(sigs: Iterable[Signal], *, now: datetime) -> str:
+    cutoff = now - timedelta(days=_WORKSTREAM_DOC_DAYS)
+    docs: list[tuple[int, datetime, str]] = []
+    for s in sigs:
+        if s.kind != "doc" or s.timestamp < cutoff:
+            continue
+        score = _planning_doc_score(s.ref or "")
+        if score == 0:
+            continue
+        _, rest = _split_doc_signal(s)
+        clean = clean_doc_prose(rest) if rest else ""
+        clean = _SUMMARY_PREFIX_RE.sub("", clean)
+        summary = first_sentence(clean, limit=180) if clean else ""
+        if summary:
+            docs.append((score, s.timestamp, summary))
+    if not docs:
+        return ""
+    return max(docs, key=lambda item: (item[0], item[1]))[2]
+
+
+def _commit_topic_fragment(summary: str) -> str:
+    text = _COMMIT_TAG_RE.sub("", summary).strip()
+    text = _CONVENTIONAL_PREFIX_RE.sub("", text).strip()
+    text = _LEADING_VERB_RE.sub("", text).strip()
+    text = text.lstrip(":- ").strip()
+    return _trim(text, 80)
+
+
+def _topic_tokens(text: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _TOPIC_STOPWORDS
+    }
+
+
+def _similar_topic(a: str, b: str) -> bool:
+    if a == b or a in b or b in a:
+        return True
+    ta = _topic_tokens(a)
+    tb = _topic_tokens(b)
+    if not ta or not tb:
+        return False
+    overlap = len(ta & tb)
+    return overlap >= min(len(ta), len(tb)) and overlap > 0
+
+
+def _join_phrases(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+
+def _recent_changes_summary(sigs: Iterable[Signal], *, now: datetime) -> str:
+    cutoff = now - timedelta(days=_RECENT_CHANGES_DAYS)
+    commits = sorted(
+        (s for s in sigs if s.kind == "commit" and s.timestamp >= cutoff),
+        key=lambda s: s.timestamp, reverse=True,
+    )
+    fragments: list[str] = []
+    for commit in commits:
+        fragment = _commit_topic_fragment(commit.summary)
+        if not fragment or any(_similar_topic(fragment, existing) for existing in fragments):
+            continue
+        fragments.append(fragment)
+        if len(fragments) == 3:
+            break
+    if not fragments:
+        return ""
+    if len(fragments) == 1:
+        return f"Recent commit: {fragments[0]}."
+    return f"Recent commits focused on {_join_phrases(fragments)}."
+
+
+def _workstream_summary(sigs: Iterable[Signal], *, now: datetime, purpose: str, focus: str,
+                        focus_kind: str, last_action: str, recent_changes: str) -> str:
+    plan_summary = _planning_doc_summary(sigs, now=now)
+    if plan_summary:
+        return plan_summary
+    if focus and focus_kind == "prompt":
+        return _trim(focus.rstrip("."), 180) + "."
+    if recent_changes:
+        return recent_changes
+    if purpose:
+        return first_sentence(purpose, limit=180)
+    if last_action:
+        return f"Latest concrete action: {last_action}."
+    return ""
+
+
+def _attention_summary(report: ProjectReport, *, outstanding: Outstanding,
+                       drift_count: int | None, drift_doc: str | None) -> str:
+    o = outstanding
+    if drift_count is not None:
+        ref = drift_doc or o.plan_doc_ref or "plan doc"
+        return (
+            f"{ref} says complete, but {drift_count} later commit(s) mean the documented state no longer matches the code."
+        )
+    if o.plan_next and o.git_uncommitted_count > 0:
+        ref = f" from {o.plan_doc_ref}" if o.plan_doc_ref else ""
+        return (
+            f"The tree is still dirty while the plan{ref} still points at: {_trim(o.plan_next, 120)}."
+        )
+    if o.plan_next and o.orphaned_thread_age_hours is not None:
+        return (
+            f"The last substantive thread stalled {o.orphaned_thread_age_hours}h ago before landing the next plan step: {_trim(o.plan_next, 120)}."
+        )
+    if o.plan_next:
+        return f"The next unresolved plan step is: {_trim(o.plan_next, 120)}."
+    if o.orphaned_thread_age_hours is not None and o.git_uncommitted_count > 0:
+        return (
+            f"{o.git_uncommitted_count} file(s) are still uncommitted, and the last substantive prompt is {o.orphaned_thread_age_hours}h old with no follow-up commit."
+        )
+    if o.orphaned_thread_age_hours is not None:
+        return (
+            f"The last substantive prompt is {o.orphaned_thread_age_hours}h old with no follow-up commit, so the thread ended before code landed."
+        )
+    if o.git_uncommitted_count > 0:
+        return (
+            f"{o.git_uncommitted_count} file(s) have uncommitted work, so the current state is not yet captured in history."
+        )
+    if o.git_ahead > 0 and o.git_upstream:
+        return f"Committed work exists locally but has not been pushed to {o.git_upstream}."
+    if o.git_ahead > 0:
+        return "Committed work exists locally but has not been pushed upstream yet."
+    if o.git_behind > 0 and o.git_upstream:
+        return f"Upstream moved {o.git_behind} commit(s) ahead of local HEAD on {o.git_upstream}."
+    if o.git_behind > 0:
+        return "Upstream moved ahead of local HEAD; review before resuming."
+    if not report.is_git_repo and report.signals:
+        return "The folder has activity history but is not yet under git, so progress is harder to recover safely."
+    return ""
 
 
 def _window(sigs: Iterable[Signal], *, now: datetime, days: int) -> ActivityWindow:

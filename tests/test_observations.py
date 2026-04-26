@@ -17,6 +17,7 @@ from project_commander.observations import (
 )
 from project_commander.sources.docs import _parse_plan_structure
 
+from project_commander.report import render_detail_markdown, render_review_markdown
 
 # ───── chrome stripping ──────────────────────────────────────────────────────
 
@@ -336,3 +337,105 @@ def test_build_strips_chrome_from_extracted_purpose():
 	assert "**" not in obs.purpose
 	assert "Building in Public" in obs.purpose
 	assert "real-time" in obs.purpose
+
+
+
+# ───── jtbd-driven synthesis + markdown renders ─────────────────────────────
+
+def test_workstream_prefers_recent_plan_doc_summary():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[
+			Signal(
+				source="docs", kind="doc", timestamp=now - timedelta(days=3),
+				summary="[README.md] Generic product overview.", ref="README.md",
+			),
+			Signal(
+				source="docs", kind="doc", timestamp=now - timedelta(hours=2),
+				summary=("[.sisyphus/plans/optimal-plan-forward.md] Quick Summary: Clean the working tree, "
+				         "repair the benchmark methodology gap, then continue with the stable profiling pipeline."),
+				ref=".sisyphus/plans/optimal-plan-forward.md",
+			),
+		],
+	)
+	obs = build(r, now=now)
+	assert "Clean the working tree" in obs.workstream
+	assert "benchmark methodology gap" in obs.workstream
+
+
+def test_recent_changes_summarize_commit_topics():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[
+			_commit(now - timedelta(hours=1), "[T-022] Add baseline regression comparison tool"),
+			_commit(now - timedelta(hours=2), "[T-021] Collect high-item scenario data from monolith"),
+			_commit(now - timedelta(hours=3), "[T-020] Add high-item profiling scenarios (500/2000/5000)"),
+		],
+	)
+	obs = build(r, now=now)
+	lower = obs.recent_changes.lower()
+	assert obs.recent_changes.startswith("Recent commits focused on")
+	assert "baseline regression comparison tool" in lower
+	assert "high-item scenario data from monolith" in lower
+
+
+def test_attention_explains_plan_gap_beyond_dirty_count():
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py", " M b.py"],
+		plan_summaries={"PLAN.md": PlanDocSummary(
+			path="PLAN.md", total_items=4, open_items=1, next_item="Repair the benchmark methodology gap",
+		)},
+	)
+	obs = build(r, now=_now())
+	assert "tree is still dirty" in obs.attention.lower()
+	assert "benchmark methodology gap" in obs.attention.lower()
+
+
+def test_render_detail_markdown_surfaces_workstream_and_attention():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py"],
+		plan_summaries={"PLAN.md": PlanDocSummary(
+			path="PLAN.md", total_items=4, open_items=1, next_item="Repair the benchmark methodology gap",
+		)},
+		signals=[
+			Signal(
+				source="docs", kind="doc", timestamp=now - timedelta(hours=1),
+				summary="[PLAN.md] Quick Summary: Clean the working tree, repair the benchmark methodology gap.",
+				ref="PLAN.md",
+			),
+			_prompt(now - timedelta(hours=2), "review state and determine optimal plan forward"),
+		],
+	)
+	r.observations = build(r, now=now)
+	text = render_detail_markdown(r)
+	assert "> **Workstream:**" in text
+	assert "> **Attention:**" in text
+	assert "## Workstream" in text
+	assert "## Attention now" in text
+
+
+def test_render_review_markdown_uses_digest_shape_with_arc_and_attention():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py"],
+		plan_summaries={"PLAN.md": PlanDocSummary(
+			path="PLAN.md", total_items=4, open_items=1, next_item="Repair the benchmark methodology gap",
+		)},
+		signals=[
+			_commit(now - timedelta(hours=1), "[T-022] Add baseline regression comparison tool"),
+			_commit(now - timedelta(hours=2), "[T-021] Collect high-item scenario data from monolith"),
+		],
+	)
+	r.observations = build(r, now=now)
+	text = render_review_markdown([r], since_days=7)
+	assert text.startswith("# Last 7 day(s)")
+	assert "## Moved forward (1)" in text
+	assert "  - Arc:" in text
+	assert "  - Attention:" in text
+	assert "| Project |" not in text
