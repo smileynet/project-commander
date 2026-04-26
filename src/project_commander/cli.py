@@ -98,8 +98,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.project:
         # detail view, one section per matched project
-        for r in reports:
-            report.render_detail(r, console)
+        if args.format == "json":
+            sys.stdout.write(report.render_json(reports) + "\n")
+        elif args.format == "markdown":
+            parts = [report.render_detail_markdown(r) for r in reports]
+            sys.stdout.write("\n---\n\n".join(parts))
+        else:
+            for r in reports:
+                report.render_detail(r, console)
         return 0
 
     if args.format == "json":

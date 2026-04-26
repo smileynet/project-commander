@@ -131,6 +131,10 @@ _PROCEDURAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+def is_procedural(text: str) -> bool:
+    """True if a prompt body is a one-word approval (yes/proceed/...)."""
+    return bool(_PROCEDURAL_RE.match(text.strip()))
+
 # Signals of active work: dirty tree, in-flight tasks, fresh prompts.
 _ACTIVE_PROMPT_LIMIT = 220
 _FOCUS_LIMIT = 180
@@ -247,7 +251,15 @@ def _last_concrete_action(sigs: Iterable[Signal]) -> tuple[str, datetime | None,
     if not candidates:
         return "", None, ""
     best = max(candidates, key=lambda s: s.timestamp)
-    return _trim(best.summary, 180), best.timestamp, f"{best.source}:{best.kind}"
+    if best.kind == "doc":
+        # For doc edits the *event* is the file change; the file's prose lives
+        # in the dedicated docs section. Reporting it here as last_action would
+        # duplicate a long quote into the metadata block.
+        ref = best.ref or "plan doc"
+        summary = f"edited {ref}"
+    else:
+        summary = _trim(best.summary, 180)
+    return summary, best.timestamp, f"{best.source}:{best.kind}"
 
 
 def _window(sigs: Iterable[Signal], *, now: datetime, days: int) -> ActivityWindow:
