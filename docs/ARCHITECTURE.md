@@ -354,3 +354,79 @@ Each `Signal` declares its `kind` (`commit` / `prompt` / `doc` /
 `session` / `filesystem`) so the renderer knows which section to put
 it in. Adding a new kind is a deliberate model change — every reader
 must decide how to handle it, which is the point.
+
+## Candidate signal sources
+
+The seven scanners shipped today cover git + the major agent CLIs +
+in-tree docs. There are still high-value signal sources outside that
+set; this section names them so anyone implementing one (or evaluating
+whether to) starts with the same map.
+
+### bd (beads) — graph issue tracker
+
+[`bd`](https://github.com/gastownhall/beads) is a distributed graph
+issue tracker designed for coding agents. Several projects under
+`~/code` already use it (`bd onboard` is the convention); the global
+`AGENTS.md` references it as the issue-tracking tool of choice.
+
+**Why it matters here.** Agent prompts tell us what the user *asked
+for*; commits tell us what *landed*. `bd` fills the gap between those
+two: what work is *planned*, what is *in flight*, and what is *done* —
+structured, with timestamps, dependencies, and priorities. That is
+exactly the layer `project-commander` currently has to *infer* from
+prompt + commit cadence.
+
+**Where the data lives.** Per project:
+
+```
+  <project>/.beads/embeddeddolt/   default (embedded Dolt DB)
+  <project>/.beads/dolt/           server mode
+```
+
+Discovery is trivial: presence of `<project>/.beads/` tells us this
+project uses bd.
+
+**What a `BdScanner` would emit.**
+
+```
+  Signal(source="bd", kind="task",        ...)   # one per open issue
+  Signal(source="bd", kind="task_closed", ...)   # one per recent close
+  Signal(source="bd", kind="task_active", ...)   # currently in_progress
+```
+
+`task` is a new `SignalKind`. Adding it is intentional — it forces the
+renderer and observations layer to decide how to display it.
+Provisional plan:
+
+- **`Observations.purpose` / `focus`**: an open `bd` issue with the
+  highest priority becomes a strong focus candidate, often more
+  reliable than the latest prompt.
+- **Activity windows**: closed-task counts feed the same
+  `commits/prompts/sessions` triplet, exposed as a fourth column.
+- **New flag `blocked`**: at least one open issue with status
+  `blocked` and no movement in 14 days.
+- **New progress state `Stalled`**: open `bd` ready-queue is empty
+  *and* no commits in 30 days — work is not being created and not
+  being shipped.
+
+**Implementation outline.** `bd` ships JSON output (`bd list --json`,
+`bd ready --json`, `bd stats --json`). The scanner shells out from the
+project root, parses JSON, emits one signal per task. Falls back to
+reading the Dolt database directly only if the CLI is unavailable
+(unlikely — if `.beads/` exists, the user has bd installed).
+
+Single-letter flag: **`B`** for `bd` in the `Sources` column.
+
+### Other candidates worth considering
+
+```
+  GitHub issues / PRs        per-project remote API; needs auth + rate-limit
+  Linear / Jira              org-level trackers; per-project filter required
+  shell history              ~/.zsh_history grep for `cd <project>` jumps
+  filesystem activity        recent file mtimes outside git history
+  test-run history           pytest/jest cache files indicate "last test run"
+```
+
+The bar for inclusion is the same as the existing seven: a clean
+per-project key, structured timestamps, and a story the renderer
+can tell that the existing sources cannot.
