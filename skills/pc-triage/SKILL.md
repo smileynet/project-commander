@@ -1,14 +1,13 @@
 ---
 name: pc-triage
-description: Triage report for ~/code projects — surfaces what needs attention, grouped by urgency.
+description: Triage report for your projects — surfaces what needs attention, grouped by urgency.
 ---
 
 # pc-triage
 
 Use this skill when the user asks for a triage report, asks "what
 projects need my attention", asks for a Monday-morning kickoff, or
-otherwise wants a prioritized list of which `~/code` projects to
-deal with.
+otherwise wants a prioritized list of which projects to deal with.
 
 It runs `project-commander` with JSON output, applies a fixed set of
 heuristics, and returns a markdown action list grouped by urgency.
@@ -21,7 +20,7 @@ Trigger on requests like:
 - "What projects need my attention?"
 - "Give me the Monday morning kickoff"
 - "Triage my fleet"
-- "What's flagged across `~/code`?"
+- "What's flagged across my projects?"
 
 Do **not** trigger on requests for a general fleet view — for that,
 just run `project-commander` directly. This skill is specifically for
@@ -45,7 +44,7 @@ just triage-week     # restrict to last 7 days
 Optional arguments:
 
 - `--since N` — restrict to projects active in the last N days
-- `--root /path` — scan somewhere other than `~/code`
+- `--root /path` — scan a specific root (otherwise auto-detected)
 
 Both pass through to `project-commander`. The script assumes
 `project-commander` is on `$PATH`.

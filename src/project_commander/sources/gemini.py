@@ -8,7 +8,7 @@ Chat session files contain a `messages` array per session for richer context.
 
 Because Gemini keys directories by basename only, two repos with the same
 basename collide. We accept that — the alternative (cross-checking session
-content) is brittle and `~/code` rarely has same-name siblings.
+content) is brittle and a typical project folder rarely has same-name siblings.
 """
 
 from __future__ import annotations

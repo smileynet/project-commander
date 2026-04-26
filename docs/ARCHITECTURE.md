@@ -1,7 +1,7 @@
 # Architecture
 
 `project-commander` answers one question: **what is the state of every
-project in `~/code` right now?**
+project in your project folder(s) right now?**
 
 It does that by reading every place a project leaves a trail — git
 history, agent conversation logs across seven coding tools, and plan
@@ -91,7 +91,7 @@ Three views, same underlying data, different shapes.
 
 ## How signals fuse into a report
 
-For every project under `~/code`, seven scanners read disk and emit
+For every project under your project root(s), seven scanners read disk and emit
 observations called `Signal`s. The aggregator collects them, the
 observations layer interprets them, and a renderer prints them.
 
@@ -102,7 +102,7 @@ observations layer interprets them, and a renderer prints them.
               │                                            │
               ├─ ~/.gemini/tmp/<basename>/{logs,chats} ────┤
               │                                            │
-   ~/code/foo ├─ ~/.omp/agent/sessions/-code-foo/*.jsonl ──┤  →  list[Signal]
+  <root>/foo  ├─ ~/.omp/agent/sessions/-code-foo/*.jsonl ──┤  →  list[Signal]
               │                                            │     each with:
               ├─ opencode storage  +  claude transcripts ──┤       source
               │                                            │       kind
@@ -274,7 +274,7 @@ What happens, in order, when you run the tool:
        │  1.  discover
        ▼
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  walk ~/code, drop hidden dirs                                          │
+  │  walk every project root, drop hidden dirs                                          │
   │  apply --project / --exclude basename globs                             │
   └─────────────────────────────────────────────────────────────────────────┘
        │
@@ -324,7 +324,7 @@ Three behavioral guarantees:
   project-commander report --format json         structured output
   project-commander report --format markdown     shareable report
   project-commander report --disable kiro        skip a source you don't use
-  project-commander report --root /other/path    scan somewhere other than ~/code
+  project-commander report --root /other/path    scan a specific root (repeatable)
 
   project-commander tidy [--dry-run] [--sync] [--push]
 ```

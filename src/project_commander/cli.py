@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,9 +20,29 @@ from .sources.omp import OmpScanner
 from .sources.opencode import OpenCodeScanner
 
 
+# Folders we'll auto-scan when the user does not pass --root and does not
+# set $PROJECT_COMMANDER_ROOTS. We probe each one; every folder that exists
+# under $HOME is included. Common Linux/Mac conventions, plus the macOS
+# Capitalized variants.
+_DEFAULT_ROOT_NAMES: tuple[str, ...] = (
+    "code", "projects", "src", "dev", "work", "repos", "git",
+    "Code", "Projects", "Dev",
+)
+
+
+def _default_roots(home: Path) -> list[Path]:
+    """Resolve project roots from env var or auto-detection under $HOME."""
+    env = os.environ.get("PROJECT_COMMANDER_ROOTS")
+    if env:
+        return [Path(p).expanduser().resolve()
+                for p in env.split(os.pathsep) if p.strip()]
+    return [(home / name).resolve()
+            for name in _DEFAULT_ROOT_NAMES if (home / name).is_dir()]
+
+
 def _default_config(home: Path) -> dict:
+    """Locations of agent-tool storage relative to the home directory."""
     return {
-        "code_root": home / "code",
         "claude_projects": home / ".claude" / "projects",
         "claude_transcripts": home / ".claude" / "transcripts",
         "gemini_root": home / ".gemini",
@@ -33,8 +54,10 @@ def _default_config(home: Path) -> dict:
 
 
 def _add_report_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--root", type=Path, default=None,
-                        help="project root (default: ~/code)")
+    parser.add_argument("--root", type=Path, action="append", default=[],
+                        help="project root to scan (repeatable; default: "
+                             "$PROJECT_COMMANDER_ROOTS or auto-detect from "
+                             "$HOME/{code,projects,src,dev,work,repos,git,...})")
     parser.add_argument("--home", type=Path, default=Path.home(),
                         help="home directory used to locate tool session stores (default: $HOME)")
     parser.add_argument("--project", action="append", default=[],
@@ -57,13 +80,23 @@ def _add_report_args(parser: argparse.ArgumentParser) -> None:
 
 def _run_report(args: argparse.Namespace) -> int:
     cfg = _default_config(args.home)
-    code_root = (args.root or cfg["code_root"]).expanduser().resolve()
+    roots = ([Path(r).expanduser().resolve() for r in args.root]
+             or _default_roots(args.home))
+    if not roots:
+        print(
+            "No project roots configured. Pass --root <path>, set "
+            "PROJECT_COMMANDER_ROOTS, or create one of: "
+            + ", ".join(f"~/{n}" for n in _DEFAULT_ROOT_NAMES),
+            file=sys.stderr,
+        )
+        return 1
 
-    projects = discovery.discover_projects(code_root)
+    projects = discovery.discover_projects_in_roots(roots)
     projects = discovery.filter_projects(projects, only=args.project or None,
                                          exclude=args.exclude or None)
     if not projects:
-        print(f"No projects found under {code_root}", file=sys.stderr)
+        roots_str = ", ".join(str(r) for r in roots)
+        print(f"No projects found under {roots_str}", file=sys.stderr)
         return 1
 
     git = None if "git" in args.disable else GitScanner()
@@ -116,14 +149,14 @@ def _run_report(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="project-commander",
-        description="Survey ~/code projects and apply hygiene actions.",
+        description="Survey project folders and apply hygiene actions across them.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="{report,tidy}")
 
     rp = sub.add_parser(
         "report",
-        help="Survey ~/code by fusing git, agent history, and plan docs.",
-        description="Survey ~/code by fusing git, agent history, and plan docs.",
+        help="Survey your project folders by fusing git, agent history, and plan docs.",
+        description="Survey your project folders by fusing git, agent history, and plan docs.",
     )
     _add_report_args(rp)
     rp.set_defaults(func=_run_report)

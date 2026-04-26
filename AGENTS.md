@@ -13,7 +13,7 @@ For *what the tool does*, see the [README](README.md). For
 ```
 src/project_commander/
 ├── cli.py            argparse, default config, scanner construction, dispatch
-├── discovery.py      walk ~/code, basename glob filter
+├── discovery.py      walk project root(s), basename glob filter
 ├── paths.py          per-tool cwd → session-key translations (pure functions)
 ├── models.py         Signal (frozen, UTC-enforced), ProjectReport
 ├── aggregator.py     build_report, build_all (threadpool fanout)
@@ -63,6 +63,37 @@ Observations   per-project, interpreted                 observations.Observation
 
 If a heuristic feels wrong, it lives in `observations.py`. The
 renderer never decides what state a project is in.
+
+## Root resolution
+
+There is no single "the project root". Both `report` and `tidy`
+resolve roots in this order, taking the first source that yields any:
+
+1. **`--root <path>` flags** (repeatable on the command line).
+2. **`PROJECT_COMMANDER_ROOTS` env var** (OS pathsep-separated:
+   colon on POSIX, semicolon on Windows).
+3. **Auto-detect under `$HOME`** — every existing folder named in
+   `cli._DEFAULT_ROOT_NAMES`: `code`, `projects`, `src`, `dev`,
+   `work`, `repos`, `git`, plus the macOS-cased variants `Code`,
+   `Projects`, `Dev`. *All* matching folders are returned, in the
+   declared order. A user with both `~/code` and `~/work` gets
+   both scanned by default.
+
+If the resolution returns nothing (no flags, no env var, none of
+the conventional folders exist), the command prints a friendly
+error pointing the user at `--root` / `PROJECT_COMMANDER_ROOTS`
+and exits non-zero.
+
+`discovery.discover_projects_in_roots(roots)` is the public entry
+point that handles dedup-by-absolute-path across the multi-root
+list. Symlinks are followed via `Path.resolve()`, so two roots
+pointing at the same physical directory yield one entry, not two.
+
+Adding a new root convention: append to `_DEFAULT_ROOT_NAMES` in
+`cli.py` and add a parametrized case to `tests/test_roots.py`.
+Don't add anything that is not a near-universal convention; the
+`--root` flag and env var are there for one-offs.
+
 
 ## Scanner protocol
 
@@ -142,7 +173,7 @@ Concrete checklist:
    is a model change and forces every reader to think about how to
    handle it — which is the point.
 6. Add a synthetic-fixture test in `tests/test_scanners.py`. No
-   network, no real `~/code` access.
+   network, no real project-folder access.
 
 The aggregator, observations layer, and renderer pick up the new
 source automatically — they iterate over `report.signals` and group
@@ -232,8 +263,7 @@ the same map.
 ### bd (beads) — graph issue tracker
 
 [`bd`](https://github.com/gastownhall/beads) is a distributed graph
-issue tracker designed for coding agents. Several projects under
-`~/code` already use it (`bd onboard` is the convention).
+issue tracker designed for coding agents. Several projects already use it (`bd onboard` is the convention).
 
 **Why it matters.** Agent prompts tell us what the user *asked
 for*; commits tell us what *landed*. `bd` fills the gap between
@@ -452,8 +482,9 @@ pytest -q
 ```
 
 The suite is synthetic-fixture driven: tests build a fake `home` and
-`code_root` per test using `tmp_path` and never touch real `~/code`
-or run network. `tests/test_scanners.py` covers each source plus the
+`code_root` per test using `tmp_path` and never touch a real project
+folder or run any network calls.
+`tests/test_scanners.py` covers each source plus the
 aggregator and observations layer; `tests/test_tidy.py` covers the
 pure planner and the push-refusal logic (using a sandboxed local
 bare repo — still no network).

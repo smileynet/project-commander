@@ -150,11 +150,11 @@ def _render(buckets: dict[str, list[tuple[str, str]]]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-	parser = argparse.ArgumentParser(description="pc-triage — prioritized action list for ~/code")
+	parser = argparse.ArgumentParser(description="pc-triage — prioritized action list for your projects")
 	parser.add_argument("--since", type=int, default=None,
 						help="only consider projects active in the last N days")
 	parser.add_argument("--root", default=None,
-						help="scan a different root (default: ~/code)")
+						help="scan a specific root (default: auto-detected from $HOME)")
 	args = parser.parse_args(argv)
 
 	projects = _run_pc(since=args.since, root=args.root)

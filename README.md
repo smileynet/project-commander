@@ -32,8 +32,8 @@
   know what shipped. Your recall is poor; your commit messages are
   worse. You promise to send something "in a bit" and quietly dread
   it.
-- **`~/code` has gotten away from you.** There are folders in there
-  you don't remember creating. Are they dead? Half-finished?
+- **Your project folder has gotten away from you.** There are folders
+  in there you don't remember creating. Are they dead? Half-finished?
   Sitting there judging you?
 
 `project-commander` is the tool you wish existed when those moments
@@ -79,8 +79,12 @@ Python ≥ 3.10. The only runtime dependency is
 project-commander report
 ```
 
-Walks `~/code`, reads your tool storage, prints the table. No
-daemon, no cache, no config file.
+Auto-detects your project folder (any of `~/code`, `~/projects`, `~/src`,
+`~/dev`, `~/work`, `~/repos`, `~/git`, plus the macOS-cased variants),
+reads your tool storage, prints the table. No daemon, no cache, no
+config file. Override with `--root <path>` or set
+`PROJECT_COMMANDER_ROOTS=path1:path2` if your projects live somewhere
+else — or in more than one place.
 
 ## How it shows up in your workflow
 
@@ -115,7 +119,7 @@ Substantive prompts are kept; bare approvals (`yes`, `proceed`) are
 collapsed into a one-line summary so the record reads like work
 notes, not a chat log. Edit, share, archive.
 
-**Cleaning house in `~/code`.**
+**Cleaning house in your project folder.**
 
 ```sh
 project-commander report | grep -E 'Dormant|Empty|Stub'
@@ -142,7 +146,7 @@ project-commander tidy --push      # push only branches that don’t contain hyg
 ```
 
 By default the `tidy` subcommand runs two opinionated, safe-by-design
-actions across `~/code`:
+actions across every configured project root:
 
 - **Init repos that aren't repos.** A folder with content but no `.git/`
   gets `git init` + an initial commit. Tagged with the hygiene trailer
@@ -173,7 +177,7 @@ just publish          # regenerate the full report set
 just test             # run pytest
 ```
 
-`reports/` is gitignored. It is generated from your private `~/code`
+`reports/` is gitignored. It is generated from your private project
 activity — not source-controlled.
 
 ## Skills for your agent harness
@@ -199,7 +203,7 @@ project-commander report --project <glob>          # detail view (repeatable)
 project-commander report --exclude <glob>          # hide matching folders (repeatable)
 project-commander report --format json|markdown    # alternate output
 project-commander report --disable <source>        # skip a source (repeatable)
-project-commander report --root <path>             # scan somewhere other than ~/code
+project-commander report --root <path>             # scan a specific root (repeatable)
 project-commander report --no-color                # plain output
 
 project-commander tidy [--dry-run] [--sync] [--push] [--no-init] [--no-commit] [--stale-age N]
@@ -223,7 +227,7 @@ disk state.
 ## Limitations
 
 - Gemini CLI keys sessions by workdir basename only; two repos with
-  the same basename collide. `~/code` rarely has same-name siblings.
+  the same basename collide. A typical project folder rarely has same-name siblings.
 - Kiro's chat-history file is usually a near-empty LokiJS database;
   we use file mtime as the activity signal.
 - OpenCode prompt content lives in `~/.claude/transcripts/`. If

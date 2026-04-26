@@ -272,7 +272,7 @@ def execute(p: PlannedAction, *, dry_run: bool) -> ExecutedAction:
 
 # ---------- discovery for tidy ----------
 
-def _build_reports(*, root: Path, only: list[str], exclude: list[str]) -> list[ProjectReport]:
+def _build_reports(*, roots: list[Path], only: list[str], exclude: list[str]) -> list[ProjectReport]:
 	"""Build minimal ProjectReports for tidy: we only need git state and last_active.
 
 	We do NOT run all source scanners here — tidy needs git state and a rough
@@ -280,7 +280,7 @@ def _build_reports(*, root: Path, only: list[str], exclude: list[str]) -> list[P
 	agent's session store just to make a hygiene decision. last_active is
 	derived from filesystem mtimes within the project tree.
 	"""
-	projects = discovery.discover_projects(root)
+	projects = discovery.discover_projects_in_roots(roots)
 	projects = discovery.filter_projects(projects, only=only or None, exclude=exclude or None)
 	git = GitScanner()
 	out: list[ProjectReport] = []
@@ -337,11 +337,12 @@ def add_subparser(subparsers) -> argparse.ArgumentParser:
 	"""Register the `tidy` subcommand on a parent ArgumentParser."""
 	parser = subparsers.add_parser(
 		"tidy",
-		help="Apply hygiene actions across ~/code.",
+		help="Apply hygiene actions across your project folders.",
 		description="Project hygiene: init missing repos, checkpoint stale work, optionally sync.",
 	)
-	parser.add_argument("--root", type=Path, default=None,
-						help="root to scan (default: ~/code)")
+	parser.add_argument("--root", type=Path, action="append", default=[],
+						help="root to scan (repeatable; default: $PROJECT_COMMANDER_ROOTS "
+							 "or auto-detect under $HOME)")
 	parser.add_argument("--project", action="append", default=[],
 						help="basename glob; repeatable")
 	parser.add_argument("--exclude", action="append", default=[],
@@ -364,7 +365,15 @@ def add_subparser(subparsers) -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
-	root = (args.root or Path.home() / "code").expanduser().resolve()
+	from .cli import _default_roots
+	roots = ([Path(r).expanduser().resolve() for r in args.root]
+			 or _default_roots(Path.home()))
+	if not roots:
+		Console(no_color=args.no_color).print(
+			"[red]No project roots configured. Pass --root <path> or set "
+			"PROJECT_COMMANDER_ROOTS.[/red]"
+		)
+		return 1
 	config = TidyConfig(
 		init=args.init,
 		commit_stale=args.commit_stale,
@@ -375,9 +384,10 @@ def run(args: argparse.Namespace) -> int:
 	)
 	console = Console(no_color=args.no_color, soft_wrap=False)
 
-	reports = _build_reports(root=root, only=args.project, exclude=args.exclude)
+	reports = _build_reports(roots=roots, only=args.project, exclude=args.exclude)
 	if not reports:
-		console.print(f"[yellow]no projects found under {root}[/yellow]")
+		roots_str = ", ".join(str(r) for r in roots)
+		console.print(f"[yellow]no projects found under {roots_str}[/yellow]")
 		return 1
 
 	now = datetime.now(tz=timezone.utc)
@@ -387,7 +397,8 @@ def run(args: argparse.Namespace) -> int:
 
 	# Header
 	verb = "Would tidy" if config.dry_run else "Tidying"
-	console.rule(f"[bold cyan]{verb} {root}")
+	roots_label = ", ".join(str(r) for r in roots) if len(roots) > 1 else str(roots[0])
+	console.rule(f"[bold cyan]{verb} {roots_label}")
 	bullets = []
 	if config.init:
 		bullets.append("init")

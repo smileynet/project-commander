@@ -7,7 +7,7 @@ the agent can run without further context.
 ## Installed skills
 
 ### pc-triage
-Triage report for `~/code` projects — runs `project-commander`,
+Triage report for your projects — runs `project-commander`,
 applies a fixed set of heuristics, and returns an action list
 grouped by urgency (urgent / this week / when-you-have-time /
 for-your-records). See [`pc-triage/SKILL.md`](pc-triage/SKILL.md).

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "project-commander"
 version = "0.1.0"
-description = "Survey ~/code projects by fusing git, agent conversation history, and in-project plan docs"
+description = "Cross-tool fleet check-in for project folders: fuses git, agent conversation history, and in-project plan docs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
