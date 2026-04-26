@@ -217,8 +217,10 @@ class Observations:
     focus: str = ""             # what's being asked of agents right now
     intent: str = ""            # composed user-facing intent statement
     workstream: str = ""        # synthesized current line of work
+    open_issue: str = ""        # unresolved issue / decision the user should care about
+    why_stopped: str = ""       # why work paused or why attention is needed now
     recent_changes: str = ""    # what landed recently, condensed from commit subjects
-    attention: str = ""         # why this project needs a decision / review now
+    attention: str = ""         # concise combined reason this project needs review now
     progress: Progress = Progress.EMPTY
     progress_summary: str = ""  # human one-liner for the progress state
     last_action: str = ""       # what the project last accomplished
@@ -235,7 +237,7 @@ class Observations:
 
 # ─── builders ────────────────────────────────────────────────────────────────
 
-# Doc names ranked by authority for the project's *stated* identity.
+# Doc names ranked by authority for planning/state interpretation.
 _DOC_AUTHORITY = {
     "PLAN.md": 100,
     "README.md": 90,
@@ -249,12 +251,28 @@ _DOC_AUTHORITY = {
     "TODO.md": 60,
 }
 
+# Doc names ranked by authority for the project's *stated* identity.
+# Planning docs stay in the set as a fallback, but README/ROADMAP-style docs win when present
+# so the identity line is not hijacked by the current plan.
+_PURPOSE_DOC_AUTHORITY = {
+    "README.md": 100,
+    "ROADMAP.md": 90,
+    "IMPROVEMENTS.md": 80,
+    "AGENTS.md": 70,
+    "AGENT.md": 70,
+    "CLAUDE.md": 65,
+    "GEMINI.md": 65,
+    "PLAN.md": 40,
+    "NEXT_STEPS.md": 35,
+    "TODO.md": 30,
+}
+
 # Phrases that mean "the plan says we're done." If we see these AND commits/
 # prompts after the doc's mtime, we surface plan-drift.
 _DONE_PHRASES = re.compile(
     r"\b(?:status\s*[:\-]\s*completed?|completed?|done|shipped|finished|stable|archived)\b",
     re.IGNORECASE,
-)
+ )
 
 # Low-information prompt bodies: indicate the user is iterating via brief
 # approvals rather than typing fresh intent.
@@ -295,6 +313,12 @@ _TOPIC_STOPWORDS = {
     "these", "those", "more", "additional", "still", "again",
 }
 _SUMMARY_PREFIX_RE = re.compile(r"^\s*(?:quick summary|summary)\s*:\s*", re.IGNORECASE)
+_LOW_SIGNAL_COMMIT_RES = (
+    re.compile(r"^@[A-Za-z0-9_-]+ has signed the CLA\b", re.IGNORECASE),
+    re.compile(r"^merge (?:branch|pull request)\b", re.IGNORECASE),
+    re.compile(r"^bump\b.*\bversion\b", re.IGNORECASE),
+    re.compile(r"^release v?\d", re.IGNORECASE),
+)
 
 
 def build(report: ProjectReport, *, now: datetime | None = None) -> Observations:
@@ -335,8 +359,11 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
         sigs, now=now, purpose=purpose, focus=focus, focus_kind=focus_kind,
         last_action=last_action, recent_changes=recent_changes,
     )
-    attention = _attention_summary(report, outstanding=outstanding,
-                                   drift_count=drift_count, drift_doc=drift_doc)
+    open_issue = _open_issue_summary(report, outstanding=outstanding,
+                                     drift_count=drift_count, drift_doc=drift_doc)
+    why_stopped = _why_stopped_summary(report, outstanding=outstanding,
+                                       drift_count=drift_count, drift_doc=drift_doc)
+    attention = _attention_summary(open_issue=open_issue, why_stopped=why_stopped)
     next_action = _next_action(report, progress, outstanding=outstanding,
                                drift_count=drift_count, drift_doc=drift_doc,
                                focus_kind=focus_kind)
@@ -357,6 +384,8 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
         focus=focus,
         intent=intent,
         workstream=workstream,
+        open_issue=open_issue,
+        why_stopped=why_stopped,
         recent_changes=recent_changes,
         attention=attention,
         progress=progress,
@@ -381,7 +410,7 @@ def _extract_purpose(sigs: Iterable[Signal]) -> tuple[str, str]:
 
     def score(s: Signal) -> tuple[int, datetime]:
         name = s.ref.rsplit("/", 1)[-1]
-        return _DOC_AUTHORITY.get(name, 0), s.timestamp
+        return _PURPOSE_DOC_AUTHORITY.get(name, 0), s.timestamp
 
     best = max(docs, key=score)
     # `summary` is `[<rel-path>] <prose>` — strip the bracketed prefix.
@@ -391,6 +420,7 @@ def _extract_purpose(sigs: Iterable[Signal]) -> tuple[str, str]:
         if end != -1:
             text = text[end + 2 :]
     text = clean_doc_prose(text)
+    text = _SUMMARY_PREFIX_RE.sub("", text)
     return text, f"doc:{best.ref}"
 
 
@@ -514,6 +544,10 @@ def _join_phrases(items: list[str]) -> str:
     return ", ".join(items[:-1]) + f", and {items[-1]}"
 
 
+def _is_low_signal_commit(summary: str) -> bool:
+    return any(rx.search(summary.strip()) for rx in _LOW_SIGNAL_COMMIT_RES)
+
+
 def _recent_changes_summary(sigs: Iterable[Signal], *, now: datetime) -> str:
     cutoff = now - timedelta(days=_RECENT_CHANGES_DAYS)
     commits = sorted(
@@ -522,6 +556,8 @@ def _recent_changes_summary(sigs: Iterable[Signal], *, now: datetime) -> str:
     )
     fragments: list[str] = []
     for commit in commits:
+        if _is_low_signal_commit(commit.summary):
+            continue
         fragment = _commit_topic_fragment(commit.summary)
         if not fragment or any(_similar_topic(fragment, existing) for existing in fragments):
             continue
@@ -551,48 +587,55 @@ def _workstream_summary(sigs: Iterable[Signal], *, now: datetime, purpose: str, 
     return ""
 
 
-def _attention_summary(report: ProjectReport, *, outstanding: Outstanding,
-                       drift_count: int | None, drift_doc: str | None) -> str:
+def _open_issue_summary(report: ProjectReport, *, outstanding: Outstanding,
+                        drift_count: int | None, drift_doc: str | None) -> str:
     o = outstanding
     if drift_count is not None:
         ref = drift_doc or o.plan_doc_ref or "plan doc"
-        return (
-            f"{ref} says complete, but {drift_count} later commit(s) mean the documented state no longer matches the code."
-        )
-    if o.plan_next and o.git_uncommitted_count > 0:
-        ref = f" from {o.plan_doc_ref}" if o.plan_doc_ref else ""
-        return (
-            f"The tree is still dirty while the plan{ref} still points at: {_trim(o.plan_next, 120)}."
-        )
-    if o.plan_next and o.orphaned_thread_age_hours is not None:
-        return (
-            f"The last substantive thread stalled {o.orphaned_thread_age_hours}h ago before landing the next plan step: {_trim(o.plan_next, 120)}."
-        )
+        return f"{ref} no longer matches the code that landed after it was marked complete."
     if o.plan_next:
-        return f"The next unresolved plan step is: {_trim(o.plan_next, 120)}."
-    if o.orphaned_thread_age_hours is not None and o.git_uncommitted_count > 0:
-        return (
-            f"{o.git_uncommitted_count} file(s) are still uncommitted, and the last substantive prompt is {o.orphaned_thread_age_hours}h old with no follow-up commit."
-        )
-    if o.orphaned_thread_age_hours is not None:
-        return (
-            f"The last substantive prompt is {o.orphaned_thread_age_hours}h old with no follow-up commit, so the thread ended before code landed."
-        )
-    if o.git_uncommitted_count > 0:
-        return (
-            f"{o.git_uncommitted_count} file(s) have uncommitted work, so the current state is not yet captured in history."
-        )
+        return _trim(o.plan_next.rstrip("."), 140) + "."
     if o.git_ahead > 0 and o.git_upstream:
-        return f"Committed work exists locally but has not been pushed to {o.git_upstream}."
+        return f"{o.git_ahead} local commit(s) still need to reach {o.git_upstream}."
     if o.git_ahead > 0:
-        return "Committed work exists locally but has not been pushed upstream yet."
+        return f"{o.git_ahead} local commit(s) still need to be pushed."
     if o.git_behind > 0 and o.git_upstream:
-        return f"Upstream moved {o.git_behind} commit(s) ahead of local HEAD on {o.git_upstream}."
+        return f"Local HEAD is behind {o.git_upstream} by {o.git_behind} commit(s)."
     if o.git_behind > 0:
-        return "Upstream moved ahead of local HEAD; review before resuming."
+        return f"Local HEAD is behind upstream by {o.git_behind} commit(s)."
     if not report.is_git_repo and report.signals:
-        return "The folder has activity history but is not yet under git, so progress is harder to recover safely."
+        return "Activity exists here, but there is no git history boundary yet."
     return ""
+
+
+def _why_stopped_summary(report: ProjectReport, *, outstanding: Outstanding,
+                         drift_count: int | None, drift_doc: str | None) -> str:
+    o = outstanding
+    if drift_count is not None:
+        ref = drift_doc or o.plan_doc_ref or "plan doc"
+        return f"The documented completion state in {ref} and the actual code history diverged."
+    reasons: list[str] = []
+    if o.git_uncommitted_count > 0:
+        reasons.append("work is still only in the working tree")
+    if o.orphaned_thread_age_hours is not None:
+        reasons.append(f"the last substantive prompt is {o.orphaned_thread_age_hours}h old with no follow-up commit")
+    if reasons:
+        sentence = reasons[0] if len(reasons) == 1 else f"{reasons[0]}, and {reasons[1]}"
+        return sentence[:1].upper() + sentence[1:] + "."
+    if o.git_ahead > 0:
+        return "The work landed locally, but the branch was not pushed upstream."
+    if o.git_behind > 0:
+        return "Upstream moved ahead before local review picked the work back up."
+    if not report.is_git_repo and report.signals:
+        return "The folder has activity history but no git repo, so the state is harder to recover safely."
+    return ""
+
+
+def _attention_summary(*, open_issue: str, why_stopped: str) -> str:
+    parts = [part.strip().rstrip(".") for part in (open_issue, why_stopped) if part.strip()]
+    if not parts:
+        return ""
+    return ". ".join(parts) + "."
 
 
 def _window(sigs: Iterable[Signal], *, now: datetime, days: int) -> ActivityWindow:
@@ -821,6 +864,12 @@ def _next_action(report: ProjectReport, progress: Progress, *,
                 f"{drift_count} commit(s) have landed since. Update or remove the completion marker.")
     if not report.is_git_repo and progress is not Progress.EMPTY:
         return "Run `project-commander tidy` to init this folder as a git repo."
+    if o.plan_next and o.git_uncommitted_count > 0:
+        pieces = [
+            f"resolve the next plan item: {_trim(o.plan_next, 100)}",
+            f"commit {o.git_uncommitted_count} uncommitted file(s)",
+        ]
+        return ". Then ".join([p[0].upper() + p[1:] for p in pieces]) + "."
     pieces: list[str] = []
     if o.git_uncommitted_count > 0:
         pieces.append(f"commit {o.git_uncommitted_count} uncommitted file(s)")
@@ -840,13 +889,13 @@ def _next_action(report: ProjectReport, progress: Progress, *,
         if progress is Progress.PAUSED:
             return "Decide whether to resume or stash this project."
         if progress is Progress.SHIPPED:
-            return "No action \u2014 shipped and clean."
+            return "No action — shipped and clean."
         if progress is Progress.STUB:
             return "Either start work or remove this folder."
         if progress is Progress.EMPTY:
             return "Either populate this folder or remove it."
         if progress in (Progress.IDLE, Progress.DORMANT):
-            return "No active work \u2014 archive or revisit."
+            return "No active work — archive or revisit."
         return ""
     return ". Then ".join([p[0].upper() + p[1:] for p in pieces]) + "."
 

@@ -63,35 +63,24 @@ def render_table(reports: Iterable[ProjectReport], console: Console) -> None:
 
 
 def render_review(reports: Iterable[ProjectReport], *, since_days: int, console: Console) -> None:
-	"""Period-in-review: 'what moved / what stalled / what was flagged / what's new'."""
+	"""Period-in-review digest optimized for scan-first triage."""
 	rows = list(reports)
 	now = datetime.now(tz=timezone.utc)
 	cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
 	from datetime import timedelta
 	cutoff = cutoff - timedelta(days=since_days)
-	header = f"Last {since_days} day(s) \u2014 since {cutoff.date().isoformat()}"
+	header = f"Last {since_days} day(s) — since {cutoff.date().isoformat()}"
 	console.print()
 	console.print(Rule(f"[bold]{header}[/bold]", style="cyan"))
-	moved = _section_moved_forward(rows, cutoff=cutoff)
-	parked = _section_parked_dirty(rows)
-	flagged = _section_flagged(rows)
-	new = _section_new_this_period(rows, cutoff=cutoff)
-	any_section = False
-	if moved:
-		_print_review_section(console, "Moved forward", moved, columns=("name", "stats", "focus"))
-		any_section = True
-	if parked:
-		_print_review_section(console, "Parked dirty (decide)", parked, columns=("name", "dirt", "idle"))
-		any_section = True
-	if flagged:
-		_print_review_section(console, "Flagged", flagged, columns=("name", "flag", "detail"))
-		any_section = True
-	if new:
-		_print_review_section(console, "New this period", new, columns=("name", "stats", "focus"))
-		any_section = True
-	if not any_section:
+	sections = _review_sections(rows, cutoff=cutoff)
+	if not any(entries for _, entries in sections):
 		console.print()
-		console.print("  [dim](nothing moved, nothing parked, nothing flagged)[/dim]")
+		console.print("  [dim](nothing moved, nothing needs attention)[/dim]")
+		return
+	for title, entries in sections:
+		if not entries:
+			continue
+		_print_review_section(console, title, entries)
 
 
 def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int) -> str:
@@ -101,26 +90,20 @@ def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int)
 	cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
 	from datetime import timedelta
 	cutoff = cutoff - timedelta(days=since_days)
-	sections = [
-		("Moved forward", _section_moved_forward(rows, cutoff=cutoff), "moved"),
-		("Parked dirty (decide)", _section_parked_dirty(rows), "parked"),
-		("Flagged", _section_flagged(rows), "flagged"),
-		("New this period", _section_new_this_period(rows, cutoff=cutoff), "new"),
-	]
+	sections = _review_sections(rows, cutoff=cutoff)
 	lines = [f"# Last {since_days} day(s)", "", f"_Since {cutoff.date().isoformat()}_", ""]
-	if not any(items for _, items, _ in sections):
-		lines.append("_Nothing moved, nothing parked, nothing flagged._")
+	if not any(entries for _, entries in sections):
+		lines.append("_Nothing moved, nothing needs attention._")
 		return "\n".join(lines).rstrip() + "\n"
-	lookup = {r.name: r for r in rows}
-	for title, items, kind in sections:
-		if not items:
+	for title, entries in sections:
+		if not entries:
 			continue
-		lines.append(f"## {title} ({len(items)})")
+		lines.append(f"## {title} ({len(entries)})")
 		lines.append("")
-		for row in items[:_REVIEW_SECTION_CAP]:
-			lines.extend(_review_markdown_entry(kind, row, lookup.get(row[0])))
-		if len(items) > _REVIEW_SECTION_CAP:
-			lines.append(f"- _… +{len(items) - _REVIEW_SECTION_CAP} more_")
+		for entry in entries[:_REVIEW_SECTION_CAP]:
+			lines.extend(_review_markdown_entry(entry))
+		if len(entries) > _REVIEW_SECTION_CAP:
+			lines.append(f"- _… +{len(entries) - _REVIEW_SECTION_CAP} more_")
 		lines.append("")
 	return "\n".join(lines).rstrip() + "\n"
 
@@ -138,17 +121,21 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 
 	console.print(f"[bold]Progress:[/bold] {_progress_text(obs)} — {obs.progress_summary}")
 	workstream = _truncate(_oneline(obs.workstream), limit=_FOCUS_LIMIT) if obs.workstream else ""
-	purpose = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
+	identity = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
 	if workstream:
 		console.print(f"[bold]Workstream:[/bold] {workstream}")
-	if obs.attention:
-		console.print(f"[bold]Attention:[/bold] {_truncate(_oneline(obs.attention), limit=220)}")
+	if obs.open_issue:
+		console.print(f"[bold]Open issue:[/bold] {_truncate(_oneline(obs.open_issue), limit=220)}")
+	if obs.why_stopped:
+		console.print(f"[bold]Why stopped:[/bold] {_truncate(_oneline(obs.why_stopped), limit=220)}")
+	if obs.next_action:
+		console.print(f"[bold green]First action:[/bold green] {obs.next_action}")
 	if obs.focus:
 		console.print(f"[bold]Current thread:[/bold] {_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT)}")
 	else:
 		console.print("[bold]Current thread:[/bold] [dim](no recent prompts)[/dim]")
-	if purpose and _oneline(purpose) != _oneline(workstream):
-		console.print(f"[bold]Purpose:[/bold] {purpose}")
+	if identity and _oneline(identity) != _oneline(workstream):
+		console.print(f"[bold]Project identity:[/bold] {identity}")
 	if obs.last_action:
 		when = _fmt_last_active(obs.last_action_at)
 		console.print(f"[bold]Last action:[/bold] {_oneline(obs.last_action)} [dim]({when}, {obs.last_action_source})[/dim]")
@@ -156,16 +143,13 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 		console.print("[bold]Flags:[/bold] " + " ".join(f"[yellow]{f}[/yellow]" for f in obs.flags))
 	w7, w30 = obs.window_7d, obs.window_30d
 	console.print(
-		f"[dim]Activity: 7d → {w7.commits}c / {w7.prompts}p across {w7.distinct_days} day(s); "
-		f"30d → {w30.commits}c / {w30.prompts}p[/dim]"	)
+		f"[dim]Activity: 7d → {w7.commits} commits / {w7.prompts} prompts across {w7.distinct_days} day(s); "
+		f"30d → {w30.commits} commits / {w30.prompts} prompts[/dim]"	)
 	if obs.evidence:
 		console.print("[dim]Evidence: " + "; ".join(obs.evidence) + "[/dim]")
 	console.print()
 
 	_terminal_outstanding_section(console, report, obs.outstanding)
-	if obs.next_action:
-		console.print(f"[bold green]Next:[/bold green] {obs.next_action}")
-		console.print()
 
 	_terminal_section(console, "Recent commits", report.recent(n=10, kinds=["commit"]))
 	_terminal_prompts_section(console, report)
@@ -188,15 +172,12 @@ def render_detail_markdown(report: ProjectReport) -> str:
 		lines.append(f"> **State:** {progress_label(obs.progress)} · {_fmt_last_active(report.last_active)}.  ")
 		if obs.workstream:
 			lines.append(f"> **Workstream:** {_md_safe(_truncate(_oneline(obs.workstream), limit=180))}  ")
-		if obs.attention:
-			lines.append(f"> **Attention:** {_md_safe(_truncate(_oneline(obs.attention), limit=200))}  ")
-		out_summary = _outstanding_one_line(obs.outstanding)
-		if out_summary:
-			lines.append(f"> **Outstanding:** {out_summary}.  ")
-		else:
-			lines.append("> **Outstanding:** clean (no uncommitted work, no unpushed commits).  ")
+		if obs.open_issue:
+			lines.append(f"> **Open issue:** {_md_safe(_truncate(_oneline(obs.open_issue), limit=180))}  ")
+		if obs.why_stopped:
+			lines.append(f"> **Why stopped:** {_md_safe(_truncate(_oneline(obs.why_stopped), limit=200))}  ")
 		if obs.next_action:
-			lines.append(f"> **Next:** {_md_safe(obs.next_action)}")
+			lines.append(f"> **First action:** {_md_safe(obs.next_action)}")
 		lines.append("")
 
 	lines.append(f"- **Last active:** {_fmt_last_active(report.last_active)}")
@@ -210,26 +191,31 @@ def render_detail_markdown(report: ProjectReport) -> str:
 
 	if obs is not None:
 		workstream = _truncate(_oneline(obs.workstream), limit=220) if obs.workstream else ""
-		purpose = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
+		identity = first_sentence(obs.purpose, limit=_PURPOSE_LIMIT) if obs.purpose else ""
 		if workstream:
 			lines.append("## Workstream")
 			lines.append("")
 			lines.append(_md_safe(workstream))
+			lines.append("")
+		if obs.open_issue:
+			lines.append("## Open issue")
+			lines.append("")
+			lines.append(_md_safe(_truncate(_oneline(obs.open_issue), limit=220)))
+			lines.append("")
+		if obs.why_stopped:
+			lines.append("## Why stopped")
+			lines.append("")
+			lines.append(_md_safe(_truncate(_oneline(obs.why_stopped), limit=220)))
 			lines.append("")
 		if obs.focus:
 			lines.append("## Current thread")
 			lines.append("")
 			lines.append(_md_safe(_truncate(_oneline(obs.focus), limit=_FOCUS_LIMIT)))
 			lines.append("")
-		if purpose and _oneline(purpose) != _oneline(workstream):
-			lines.append("## Purpose")
+		if identity and _oneline(identity) != _oneline(workstream):
+			lines.append("## Project identity")
 			lines.append("")
-			lines.append(_md_safe(purpose))
-			lines.append("")
-		if obs.attention:
-			lines.append("## Attention now")
-			lines.append("")
-			lines.append(_md_safe(_truncate(_oneline(obs.attention), limit=220)))
+			lines.append(_md_safe(identity))
 			lines.append("")
 		if obs.last_action:
 			when = _fmt_last_active(obs.last_action_at)
@@ -259,6 +245,8 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	if commits:
 		lines.append("## Recent commits")
 		lines.append("")
+		lines.append("_Landing evidence from the recent workstream._")
+		lines.append("")
 		for c in commits:
 			lines.append(f"- `{c.timestamp.date()}` {_md_safe(_oneline(c.summary))}")
 		lines.append("")
@@ -268,6 +256,8 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	procd = [p for p in all_prompts if is_procedural(p.summary)]
 	if subst:
 		lines.append("## Recent prompts")
+		lines.append("")
+		lines.append("_Thread and intent evidence behind the current state._")
 		lines.append("")
 		commits_set = sorted([s.timestamp for s in report.signals if s.kind == "commit"], reverse=True)
 		for p in subst[:5]:
@@ -291,6 +281,8 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	if sessions:
 		lines.append("## Sessions")
 		lines.append("")
+		lines.append("_Session boundaries that touched this project recently._")
+		lines.append("")
 		for s in sessions:
 			body = _truncate(_oneline(s.summary), limit=120)
 			lines.append(f"- `{s.timestamp.date()}` {_md_safe(body)} <sub>(`{s.source}`)</sub>")
@@ -298,6 +290,8 @@ def render_detail_markdown(report: ProjectReport) -> str:
 
 	if report.plan_summaries or report.recent(n=8, kinds=["doc"]):
 		lines.append("## Plan docs")
+		lines.append("")
+		lines.append("_Documented goals, status markers, and structured next steps._")
 		lines.append("")
 		_md_plan_docs(lines, report)
 		lines.append("")
@@ -333,6 +327,8 @@ def render_json(reports: Iterable[ProjectReport]) -> str:
 				"focus": obs.focus,
 				"intent": obs.intent,
 				"workstream": obs.workstream,
+				"open_issue": obs.open_issue,
+				"why_stopped": obs.why_stopped,
 				"recent_changes": obs.recent_changes,
 				"attention": obs.attention,
 				"progress": obs.progress.value,
@@ -459,141 +455,178 @@ def _render_band_table(rows: Sequence[ProjectReport], console: Console) -> None:
 
 # ───── period-in-review internals ────────────────────────────────────────────
 
-def _section_moved_forward(rows: Sequence[ProjectReport], *, cutoff: datetime) -> list[tuple]:
-	"""Projects with at least one commit OR substantive prompt in the window."""
-	out: list[tuple] = []
-	for r in rows:
-		obs = r.observations
-		if obs is None:
-			continue
-		commits = sum(1 for s in r.signals if s.kind == "commit" and s.timestamp >= cutoff)
-		prompts = sum(1 for s in r.signals if s.kind == "prompt" and s.timestamp >= cutoff
-		              and not is_procedural(s.summary))
-		if commits == 0 and prompts == 0:
-			continue
-		focus = obs.recent_changes or obs.workstream or obs.focus or obs.last_action or obs.purpose
-		out.append((r.name, f"{commits}c {prompts}p", _truncate(_oneline(focus or ''), limit=80)))
-	out.sort(key=lambda t: -(int(t[1].split('c')[0]) + int(t[1].split('c')[1].split('p')[0])))
-	return out
+def _review_counts(report: ProjectReport, *, cutoff: datetime) -> tuple[int, int]:
+	commits = sum(1 for s in report.signals if s.kind == "commit" and s.timestamp >= cutoff)
+	prompts = sum(
+		1 for s in report.signals
+		if s.kind == "prompt" and s.timestamp >= cutoff and not is_procedural(s.summary)
+	)
+	return commits, prompts
 
 
-def _section_parked_dirty(rows: Sequence[ProjectReport]) -> list[tuple]:
-	"""Projects with uncommitted work or pre-git content sitting idle."""
-	now = datetime.now(tz=timezone.utc)
-	out: list[tuple] = []
-	for r in rows:
-		obs = r.observations
-		if obs is None:
-			continue
-		count = obs.outstanding.git_uncommitted_count
-		if count > 0:
-			idle_days = (now - r.last_active).days if r.last_active else 0
-			# Only surface as "parked" when idle ≥ 2 days; today's dirty trees are normal.
-			if idle_days < 2:
-				continue
-			out.append((r.name, f"dirty {count}f", f"idle {idle_days}d"))
-		elif not r.is_git_repo and r.signals:
-			# folder has signals but no git
-			idle_days = (now - r.last_active).days if r.last_active else 0
-			out.append((r.name, "no-git", f"idle {idle_days}d"))
-	out.sort(key=lambda t: -int(t[2].split()[1].rstrip("d")))
-	return out
+def _review_first_commit(report: ProjectReport) -> datetime | None:
+	commits = [s.timestamp for s in report.signals if s.kind == "commit"]
+	return min(commits) if commits else None
 
 
-def _section_flagged(rows: Sequence[ProjectReport]) -> list[tuple]:
-	"""Projects with attention-worthy flags."""
+def _review_primary_flag(report: ProjectReport) -> str:
+	obs = report.observations
+	if obs is None:
+		return ""
 	priority = ("plan-drift", "prompt-injection-detected", "upstream-only", "tool-cluster")
-	out: list[tuple] = []
-	for r in rows:
-		obs = r.observations
-		if obs is None:
-			continue
-		hit = next((f for f in priority if f in obs.flags), None)
-		if not hit:
-			continue
-		detail = ""
-		if hit == "plan-drift":
-			# pull the count from the evidence line, e.g. "plan-drift: doc says complete, 5 commits since"
-			for ev in obs.evidence:
-				if ev.startswith("plan-drift:"):
-					detail = ev[len("plan-drift: "):]
-					break
-		elif hit == "tool-cluster":
-			detail = f"{len(r.sources_active)} tools"
-		out.append((r.name, hit, detail))
-	return out
+	return next((flag for flag in priority if flag in obs.flags), "")
 
 
-def _section_new_this_period(rows: Sequence[ProjectReport], *, cutoff: datetime) -> list[tuple]:
-	"""Projects whose first observed commit is within the window."""
-	out: list[tuple] = []
-	for r in rows:
-		obs = r.observations
-		if obs is None:
+def _review_is_parked(report: ProjectReport) -> bool:
+	obs = report.observations
+	if obs is None:
+		return False
+	now = datetime.now(tz=timezone.utc)
+	if obs.outstanding.git_uncommitted_count > 0:
+		idle_days = (now - report.last_active).days if report.last_active else 0
+		return idle_days >= 2
+	if not report.is_git_repo and report.signals:
+		return True
+	return False
+
+
+def _review_outcome_text(text: str) -> str:
+	text = _truncate(_oneline(text), limit=200).rstrip(".")
+	if text.startswith("Recent commits focused on "):
+		return "Advanced " + text[len("Recent commits focused on "):]
+	if text.startswith("Recent commit: "):
+		return "Advanced " + text[len("Recent commit: "):]
+	if text.startswith("Latest concrete action: "):
+		return text[len("Latest concrete action: "):]
+	return text
+
+
+def _review_outcome(report: ProjectReport) -> str:
+	obs = report.observations
+	if obs is None:
+		return ""
+	for text in (obs.recent_changes, obs.workstream, obs.focus, obs.last_action, obs.purpose):
+		if text:
+			outcome = _review_outcome_text(text)
+			if outcome:
+				return outcome
+	return ""
+
+
+def _review_badges(report: ProjectReport, *, cutoff: datetime, flag: str, needs_attention: bool) -> tuple[str, ...]:
+	badges: list[str] = []
+	first_commit = _review_first_commit(report)
+	if first_commit is not None and first_commit >= cutoff:
+		badges.append("new")
+	obs = report.observations
+	if obs is not None and needs_attention:
+		if obs.outstanding.git_uncommitted_count > 0:
+			badges.append("dirty")
+		elif not report.is_git_repo and report.signals:
+			badges.append("no-git")
+	if flag:
+		badges.append(flag)
+	return tuple(badges)
+
+
+def _review_entry(report: ProjectReport, *, cutoff: datetime) -> dict | None:
+	obs = report.observations
+	if obs is None:
+		return None
+	commits, prompts = _review_counts(report, cutoff=cutoff)
+	flag = _review_primary_flag(report)
+	parked = _review_is_parked(report)
+	first_commit = _review_first_commit(report)
+	is_new = first_commit is not None and first_commit >= cutoff
+	needs_attention = bool(
+		flag or parked
+		or obs.outstanding.git_uncommitted_count > 0
+		or obs.outstanding.git_ahead > 0
+		or obs.outstanding.git_behind > 0
+		or obs.outstanding.orphaned_thread_age_hours is not None
+		or (not report.is_git_repo and report.signals)
+	)
+	if not (commits or prompts or needs_attention):
+		return None
+	if needs_attention:
+		section = "Needs attention"
+	elif is_new:
+		section = "New this period"
+	else:
+		section = "Moved forward"
+	last_ts = report.last_active.timestamp() if report.last_active else 0.0
+	flag_rank = {"plan-drift": 0, "prompt-injection-detected": 1, "upstream-only": 2, "tool-cluster": 3}.get(flag, 4)
+	if section == "Needs attention":
+		sort_key = (flag_rank, -last_ts)
+	elif section == "New this period":
+		sort_key = (-last_ts, -(commits + prompts))
+	else:
+		sort_key = (-(commits + prompts), -last_ts)
+	return {
+		"name": report.name,
+		"section": section,
+		"outcome": _review_outcome(report),
+		"signals": f"{commits} commit(s), {prompts} substantive prompt(s)",
+		"attention": _truncate(_oneline(obs.attention), limit=220) if section == "Needs attention" and obs.attention else "",
+		"started": f"Started {first_commit.strftime('%a')}" if section == "New this period" and first_commit else "",
+		"badges": _review_badges(report, cutoff=cutoff, flag=flag, needs_attention=needs_attention),
+		"sort_key": sort_key,
+	}
+
+
+def _review_sections(rows: Sequence[ProjectReport], *, cutoff: datetime) -> list[tuple[str, list[dict]]]:
+	buckets: dict[str, list[dict]] = {
+		"Needs attention": [],
+		"Moved forward": [],
+		"New this period": [],
+	}
+	for report in rows:
+		entry = _review_entry(report, cutoff=cutoff)
+		if entry is None:
 			continue
-		commits = [s for s in r.signals if s.kind == "commit"]
-		if not commits:
-			continue
-		first = min(commits, key=lambda s: s.timestamp)
-		if first.timestamp < cutoff:
-			continue
-		when = first.timestamp.strftime("%a")
-		focus = obs.recent_changes or obs.workstream or obs.focus or obs.last_action or obs.purpose
-		out.append((r.name, f"first {when}", _truncate(_oneline(focus or ''), limit=80)))
-	return out
+		buckets[entry["section"]].append(entry)
+	for entries in buckets.values():
+		entries.sort(key=lambda item: item["sort_key"])
+	return [(title, buckets[title]) for title in ("Needs attention", "Moved forward", "New this period")]
 
 
 _REVIEW_SECTION_CAP = 12
 
 
-def _print_review_section(console: Console, title: str, rows: list[tuple], *, columns: tuple[str, ...]) -> None:
-	count = len(rows)
+def _review_sentence(text: str) -> str:
+	text = text.strip()
+	if not text:
+		return "(no weekly summary)"
+	if text.endswith((".", "!", "?", "…")):
+		return text
+	return text + "."
+
+
+def _print_review_section(console: Console, title: str, entries: list[dict]) -> None:
+	count = len(entries)
 	console.print()
 	console.print(f"[bold]{title}[/bold] [dim]({count})[/dim]")
-	shown = rows[:_REVIEW_SECTION_CAP]
-	for row in shown:
-		name = row[0]
-		col2 = row[1] if len(row) > 1 else ""
-		col3 = row[2] if len(row) > 2 else ""
-		console.print(f"  [cyan]{name:<30}[/cyan] [yellow]{col2:<14}[/yellow] [dim]{col3}[/dim]")
+	for entry in entries[:_REVIEW_SECTION_CAP]:
+		badge_str = f" [dim]({', '.join(entry['badges'])})[/dim]" if entry["badges"] else ""
+		console.print(f"  [cyan]{entry['name']}[/cyan]{badge_str} [dim]— {_review_sentence(entry['outcome'])}[/dim]")
+		console.print(f"    [yellow]{entry['signals']}[/yellow]")
+		if entry["started"]:
+			console.print(f"    [dim]{entry['started']}[/dim]")
+		if entry["attention"]:
+			console.print(f"    [dim]Needs attention: {entry['attention']}[/dim]")
 	if count > _REVIEW_SECTION_CAP:
-		console.print(f"  [dim]\u2026 +{count - _REVIEW_SECTION_CAP} more[/dim]")
+		console.print(f"  [dim]… +{count - _REVIEW_SECTION_CAP} more[/dim]")
 
 
-def _review_arc(report: ProjectReport | None) -> str:
-	if report is None or report.observations is None:
-		return ""
-	obs = report.observations
-	for text in (obs.recent_changes, obs.workstream, obs.focus, obs.last_action, obs.purpose):
-		if text:
-			return _truncate(_oneline(text), limit=200)
-	return ""
-
-
-def _review_attention(report: ProjectReport | None) -> str:
-	if report is None or report.observations is None or not report.observations.attention:
-		return ""
-	return _truncate(_oneline(report.observations.attention), limit=220)
-
-
-def _review_markdown_entry(kind: str, row: tuple, report: ProjectReport | None) -> list[str]:
-	name = _md_safe(str(row[0]))
-	lines: list[str] = []
-	if kind in ("moved", "new") and len(row) >= 2:
-		lines.append(f"- **{name}** — {row[1]}")
-	elif kind == "parked" and len(row) >= 3:
-		lines.append(f"- **{name}** — {row[1]}, {row[2]}")
-	elif kind == "flagged" and len(row) >= 2:
-		detail = f": {_md_safe(str(row[2]))}" if len(row) >= 3 and row[2] else ""
-		lines.append(f"- **{name}** — {row[1]}{detail}")
-	else:
-		lines.append(f"- **{name}**")
-	arc = _review_arc(report)
-	if arc:
-		lines.append(f"  - Arc: {_md_safe(arc)}")
-	attention = _review_attention(report)
-	if attention:
-		lines.append(f"  - Attention: {_md_safe(attention)}")
+def _review_markdown_entry(entry: dict) -> list[str]:
+	name = _md_safe(str(entry["name"]))
+	badge_str = f" _({', '.join(entry['badges'])})_" if entry["badges"] else ""
+	lines = [f"- **{name}**{badge_str} — {_md_safe(_review_sentence(entry['outcome']))}"]
+	lines.append(f"  - Signals: {_md_safe(entry['signals'])}")
+	if entry["started"]:
+		lines.append(f"  - {_md_safe(entry['started'])}")
+	if entry["attention"]:
+		lines.append(f"  - Needs attention: {_md_safe(entry['attention'])}")
 	return lines
 
 
@@ -732,9 +765,6 @@ def _md_outstanding_block(lines: list[str], report: ProjectReport, o: Outstandin
 	if o.orphaned_thread_age_hours is not None:
 		lines.append(f"- **thread:** last prompt {o.orphaned_thread_age_hours}h ago has no follow-up commit")
 	lines.append("")
-	if report.observations and report.observations.next_action:
-		lines.append(f"**Next:** {_md_safe(report.observations.next_action)}")
-		lines.append("")
 
 
 def _md_plan_docs(lines: list[str], report: ProjectReport) -> None:

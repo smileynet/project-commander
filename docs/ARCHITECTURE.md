@@ -146,8 +146,8 @@ Three views, same underlying data, different shapes.
 | View | Best for |
 |---|---|
 | **Fleet table** | *"Which projects am I active on, and what was I doing?"* — one row per project, sorted by recency. |
-| **Project detail** | *"What was this work really about, what is unresolved, and where do I resume?"* — full audit trail with workstream, attention, outstanding, next step, and recent commits / prompts / sessions / plan-doc edits. |
-| **JSON / markdown** | Scripting downstream, or sharing a static report. Plain markdown stays tabular by default, but `--since N` now switches markdown into the same review-digest JTBD as the terminal output. JSON includes both the interpreted observations and the raw signals. |
+| **Project detail** | *"What was this work really about, what is unresolved, why did it stop here, and what do I do first?"* — a self-sufficient resume brief followed by an auditable trail of commits / prompts / sessions / plan-doc edits. |
+| **JSON / markdown** | Scripting downstream, or sharing a static report. Plain fleet markdown stays tabular by default, but `--since N` now switches markdown into the same review-digest JTBD as the terminal output. JSON includes both the interpreted observations and the raw signals. |
 
 ## How signals fuse into a report
 
@@ -186,10 +186,11 @@ observations layer interprets them, and a renderer prints them.
 │  ──  progress (enum) │
 │  ──  purpose / focus │
 │  ──  workstream      │
+│  ──  open issue      │
+│  ──  why stopped     │
 │  ──  attention       │
 │  ──  intent          │
-│  ──  flags           │
-│  ──  evidence        │
+│  ──  flags / evidence│
 │  ──  7d/30d/90d      │
                                                          └──────────┬───────────┘
                                                                     │
@@ -208,48 +209,41 @@ The seven signal sources, in detail:
 | **Oh-My-Pi** | `~/.omp/agent/sessions/-code-<name>/*.jsonl` | OMP harness session prompts. |
 | **OpenCode** | `~/.local/share/opencode/storage/` ⨝ `~/.claude/transcripts/` | OpenCode session prompts; the storage JSON tells us which session belonged to which working directory. |
 | **Kiro / Amazon Q** | `~/.aws/amazonq/history/chat-history-<md5(abspath)>.json` | Kiro chat-history file mtime as activity signal. |
-| **Docs** | `PLAN.md`, `README.md`, `ROADMAP.md`, `NEXT_STEPS.md`, `IMPROVEMENTS.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `TODO.md` | The *purpose* signal, plus mtime + done-phrase detection for plan-drift. |
+| **Docs** | `PLAN.md`, `README.md`, `ROADMAP.md`, `NEXT_STEPS.md`, `IMPROVEMENTS.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `TODO.md` | Stable project identity from README/ROADMAP-style docs, plus planning state / done-phrase detection for plan-drift and next-step synthesis. |
 
-## Intent: purpose + focus
+## Intent: identity + focus
 
-The `Intent` cell composes two layers:
+The fleet-table `Intent` cell composes two layers:
 
 ```
-  PURPOSE                              FOCUS
+  IDENTITY                             FOCUS
   what the project is FOR              what it is doing RIGHT NOW
   ──────────────────────────           ─────────────────────────────
-  highest-authority plan doc,    +     latest non-procedural prompt
-  first prose paragraph                within the last 30 days
+  highest-authority identity doc, +    latest non-procedural prompt
+  usually README / ROADMAP             within the last 30 days
        │                                       │
        └───────────────┬───────────────────────┘
                        ▼
-            "<purpose>  Currently: <focus>"
+            "<identity>  Currently: <focus>"
 ```
 
-Plan-doc authority is a fixed score. The first file that exists in
-the project takes the purpose slot:
-
-```
-  PLAN.md   →   README.md   →   ROADMAP.md   →   NEXT_STEPS.md   →   IMPROVEMENTS.md
-   100            90              85                 80                  75
-                                                                          │
-            AGENTS.md   →   CLAUDE.md / GEMINI.md   →   TODO.md   ◄───────┘
-              70                  65                       60
-```
+Identity authority is intentionally different from planning authority: README/ROADMAP-style docs win when present so the stable project identity does not get hijacked by the latest plan doc. Planning docs still feed the detail report’s `Workstream`, `Open issue`, `Why stopped`, and `First action` summary.
 
 "Substantive" means *not* a one-word approval. Procedural prompts
 (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`)
 are filtered out and surfaced separately as a flag — see below.
 
 
-## Workstream + Attention: the hidden-value synthesis
+## Workstream + Open issue + Why stopped: the hidden-value synthesis
 
-The detail view now lifts two extra lines above the raw audit trail:
+The detail view now lifts a resume brief above the raw audit trail:
 
 - **Workstream** — the best current line-of-work summary, preferring a recent plan-like doc (`PLAN`, `NEXT_STEPS`, `.sisyphus/plans/...`, etc.) over a generic README blurb.
-- **Attention** — why you should care *now*, expressed as the unresolved story behind the repo state: dirty tree + stalled thread, plan drift, unpushed commits, no-git activity, and similar synthesis that is not obvious from `git status` alone.
+- **Open issue** — the unresolved decision, gap, or state mismatch that a reader would otherwise have to infer from plan docs, dirty trees, ahead/behind state, and prompt history.
+- **Why stopped** — why this project needs attention now: dirty working tree, orphaned thread, unpushed commits, upstream drift, or no-git activity.
+- **First action** — the safest next move, synthesized from the unresolved state rather than just replaying raw counts.
 
-This is the JTBD boundary: branch name, dirty count, and recent commits are still shown, but as evidence. The headline job is to answer *"what was this work really about, what is unresolved, and where do I resume?"* before you start scrolling through raw history.
+This is the JTBD boundary: branch name, dirty count, recent commits, and prompts are still shown, but as evidence. The first screen should answer *"what was this work really about, what is unresolved, why did it stop here, and what do I do first?"* before the reader starts scrolling through raw history.
 
 ## Progress: where the project is in its lifecycle
 
@@ -321,10 +315,11 @@ Flags surface conditions you'd otherwise have to spot manually.
 `procedural-prompts` is *not* a defect — it tells you *"I'm approving
 an agent here, not directing it."* Useful as a usage-shape signal.
 
-## Outstanding: what still needs to happen
+## Outstanding + First action
 
-Where flags describe a *condition*, *Outstanding* describes the
-*work*. The detail view always carries an Outstanding block:
+> `Outstanding` is the evidence block. `First action` is the decision surface.
+
+Where flags describe a *condition*, *Outstanding* describes the concrete unresolved work signals underneath it. The detail view keeps the full Outstanding block even after the top summary already told you what to do next:
 
 ```
   Outstanding
@@ -332,8 +327,12 @@ Where flags describe a *condition*, *Outstanding* describes the
              branch main is 1 commit ahead of origin/main
     plan     PLAN.md: 3 unchecked item(s); next: "Add CI workflow"
     thread   last prompt 24h ago has no follow-up commit
+```
 
-  Next: Commit 8 uncommitted file(s). Then push 1 commit to origin/main.
+The top brief turns those signals into a first move:
+
+```
+  First action: Resolve the next plan item: Add CI workflow. Then commit 8 uncommitted file(s).
 ```
 
 Sources, in order:
@@ -344,70 +343,45 @@ Sources, in order:
 - **plan**: `PLAN.md` / `NEXT_STEPS.md` / `TODO.md` /
   `IMPROVEMENTS.md` / `ROADMAP.md` are parsed for `- [ ]` checkboxes
   and roman-numeral / `Phase N` headings. The doc with the highest
-  authority score wins the *next-item* slot.
+  planning authority score wins the *next-item* slot.
 - **thread**: latest substantive (non-procedural) prompt is
   *orphaned* if it sits 4 hours to 7 days old with no commit landing
   after it. Below 4 hours we assume mid-conversation; past 7 days the
   thread is just history.
 
-## Next: the synthesized step
-
-Both the detail view and the markdown handoff end with a `Next:`
-line that turns the Outstanding block into a single imperative
-sentence:
-
-```
-  drift fired              →  "Reconcile PLAN.md: it says complete but 5 commits
-                                have landed since. Update or remove the completion
-                                marker."
-  no git, has signals      →  "Run `project-commander tidy` to init this folder
-                                as a git repo."
-  dirty + ahead            →  "Commit N uncommitted file(s). Then push M commit(s)
-                                to origin/main."
-  clean Hot/Active + plan  →  "Pick up the next plan item (PLAN.md): …"
-  Paused                   →  "Decide whether to resume or stash this project."
-  Shipped / clean          →  "No action — shipped and clean."
-```
+Drift still wins: when plan docs say complete but code continued moving, reconciliation comes before any other action.
 
 Drift always wins: the plan needs reconciliation before any other
 work matters.
 
 ## Period in review (`--since N`)
 
-When `--since` is set with `N ≤ 30`, the report switches from a
-fleet table to a four-section digest tuned to the Monday-morning
-JTBD:
+When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first digest with *exclusive primary placement*: one project appears in one major section, and cross-cutting facts show up as badges or detail lines rather than duplicate rows.
 
 ```
   Last 7 day(s) — since 2026-04-19
 
-  Moved forward (5)
-    project-commander       10c 8p   multi-root cleanup
-    cdda_improved            5c 12p  review state of project
-    …
+  Needs attention (4)
+    cdda_improved (new, dirty) — Advanced profiling/comparison scenarios and comparison tooling.
 
-  Parked dirty (decide) (3)
-    PrusaSlicer              dirty 6f   idle 22d
-    agentic_enterprise       dirty 31f  idle 52d
-    alpha                    no-git     idle  9d
+      10 commit(s), 8 substantive prompt(s)
+      Needs attention: benchmark methodology gap remains open. Work is still only in the working tree.
 
-  Flagged (1)
-    best_practices           plan-drift  doc says complete, 5 commits since
+  Moved forward (7)
+    project-commander — Reframed reports around hidden work state.
 
-  New this period (1)
-    hey-ate-training         first Tue   first commit landed during the window
+      3 commit(s), 2 substantive prompt(s)
 ```
 
-Each section answers a different question:
+The weekly digest now answers three questions, in this order:
 
-- **Moved forward** — *what did I touch?* commits + non-procedural
-  prompts during the window, sorted by total activity
-- **Parked dirty** — *what needs a decision?* dirty trees idle for \u2265 2
-  days, plus folders with content but no git
-- **Flagged** — *what's anomalous?* plan-drift, prompt-injection-detected,
-  upstream-only, tool-cluster
-- **New this period** — *what's new?* projects whose first observed
-  commit landed inside the window
+- **Needs attention** — *what needs a decision or safe resume before anything else?*
+- **Moved forward** — *what materially advanced this week?*
+- **New this period** — *what started this week without already needing attention?*
+
+Headline rule: **outcome first, counts second**. The row should tell the reader what happened before it tells them how many commits or prompts produced it.
+
+Prompt counts in weekly rows are **substantive prompts** only — procedural approvals (`yes`, `proceed`, `continue`) do not headline the week’s story.
 
 Each section caps at 12 rows with `… +N more` overflow. JSON stays flat for downstream consumers; markdown now follows the digest shape too when `--since N` is used, so the shareable artifact answers the same Monday-morning triage questions as the terminal view.
 

@@ -56,8 +56,8 @@ ProjectReport  per-project, all signals folded in       models.ProjectReport
    │           branch, dirty flag, signals[], last_active
    ▼
 Observations   per-project, interpreted                 observations.Observations
-               progress enum, intent/workstream/attention text,
-               flags, evidence, 7d/30d/90d activity windows
+               progress enum, intent/workstream/open-issue/
+               why-stopped text, flags, evidence, 7d/30d/90d activity windows
 ```
 
 | Layer | Reads | Produces | Has business logic? |

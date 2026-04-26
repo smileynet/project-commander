@@ -381,7 +381,7 @@ def test_recent_changes_summarize_commit_topics():
 	assert "high-item scenario data from monolith" in lower
 
 
-def test_attention_explains_plan_gap_beyond_dirty_count():
+def test_attention_splits_open_issue_and_why_stopped():
 	r = ProjectReport(
 		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
 		git_dirty=True, git_uncommitted=[" M a.py", " M b.py"],
@@ -390,11 +390,29 @@ def test_attention_explains_plan_gap_beyond_dirty_count():
 		)},
 	)
 	obs = build(r, now=_now())
-	assert "tree is still dirty" in obs.attention.lower()
+	assert "benchmark methodology gap" in obs.open_issue.lower()
+	assert "working tree" in obs.why_stopped.lower()
 	assert "benchmark methodology gap" in obs.attention.lower()
+	assert "working tree" in obs.attention.lower()
 
 
-def test_render_detail_markdown_surfaces_workstream_and_attention():
+def test_recent_changes_skip_low_signal_commit_noise():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[
+			_commit(now - timedelta(hours=1), "@user123 has signed the CLA in org/repo#1"),
+			_commit(now - timedelta(hours=2), "Preserve migration history during config migration"),
+			_commit(now - timedelta(hours=3), "Update OpenAI defaults to GPT-5.5"),
+		],
+	)
+	obs = build(r, now=now)
+	lower = obs.recent_changes.lower()
+	assert "signed the cla" not in lower
+	assert "migration history" in lower
+
+
+def test_render_detail_markdown_surfaces_resume_brief():
 	now = _now()
 	r = ProjectReport(
 		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
@@ -414,28 +432,37 @@ def test_render_detail_markdown_surfaces_workstream_and_attention():
 	r.observations = build(r, now=now)
 	text = render_detail_markdown(r)
 	assert "> **Workstream:**" in text
-	assert "> **Attention:**" in text
-	assert "## Workstream" in text
-	assert "## Attention now" in text
+	assert "> **Open issue:**" in text
+	assert "> **Why stopped:**" in text
+	assert "> **First action:**" in text
+	assert "## Open issue" in text
+	assert "## Why stopped" in text
+	assert "## Project identity" not in text
 
 
-def test_render_review_markdown_uses_digest_shape_with_arc_and_attention():
+def test_render_review_markdown_uses_exclusive_sections_and_outcome_first_rows():
 	now = _now()
-	r = ProjectReport(
-		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+	attention_report = ProjectReport(
+		path=Path("/tmp/attention"), name="attention", is_git_repo=True, git_branch="main",
 		git_dirty=True, git_uncommitted=[" M a.py"],
-		plan_summaries={"PLAN.md": PlanDocSummary(
-			path="PLAN.md", total_items=4, open_items=1, next_item="Repair the benchmark methodology gap",
-		)},
 		signals=[
 			_commit(now - timedelta(hours=1), "[T-022] Add baseline regression comparison tool"),
-			_commit(now - timedelta(hours=2), "[T-021] Collect high-item scenario data from monolith"),
 		],
 	)
-	r.observations = build(r, now=now)
-	text = render_review_markdown([r], since_days=7)
+	attention_report.observations = build(attention_report, now=now)
+	new_report = ProjectReport(
+		path=Path("/tmp/new"), name="newproj", is_git_repo=True, git_branch="main",
+		signals=[
+			_commit(now - timedelta(hours=1), "Create initial workflow skeleton"),
+		],
+	)
+	new_report.observations = build(new_report, now=now)
+	text = render_review_markdown([attention_report, new_report], since_days=7)
 	assert text.startswith("# Last 7 day(s)")
-	assert "## Moved forward (1)" in text
-	assert "  - Arc:" in text
-	assert "  - Attention:" in text
+	assert "## Needs attention (1)" in text
+	assert "## New this period (1)" in text
+	assert "## Moved forward" not in text
+	assert "- **attention** _(new, dirty)_ —" in text
+	assert "  - Signals: 1 commit(s), 0 substantive prompt(s)" in text
+	assert text.count("**attention**") == 1
 	assert "| Project |" not in text
