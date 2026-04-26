@@ -412,7 +412,7 @@ def test_recent_changes_skip_low_signal_commit_noise():
 	assert "migration history" in lower
 
 
-def test_render_detail_markdown_surfaces_resume_brief():
+def test_render_detail_markdown_surfaces_resume_brief_and_sources():
 	now = _now()
 	r = ProjectReport(
 		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
@@ -435,12 +435,15 @@ def test_render_detail_markdown_surfaces_resume_brief():
 	assert "> **Open issue:**" in text
 	assert "> **Why stopped:**" in text
 	assert "> **First action:**" in text
-	assert "## Open issue" in text
-	assert "## Why stopped" in text
-	assert "## Project identity" not in text
+	assert "## Where to inspect" in text
+	assert "- **Plan doc:**" in text
+	assert "- **Prompt thread:**" in text
+	assert "## Raw sources" in text
+	assert "### Plan docs" in text
+	assert "### Prompt thread" in text
 
 
-def test_render_review_markdown_uses_exclusive_sections_and_outcome_first_rows():
+def test_render_review_markdown_uses_directive_sections_and_source_pointers():
 	now = _now()
 	attention_report = ProjectReport(
 		path=Path("/tmp/attention"), name="attention", is_git_repo=True, git_branch="main",
@@ -459,10 +462,11 @@ def test_render_review_markdown_uses_exclusive_sections_and_outcome_first_rows()
 	new_report.observations = build(new_report, now=now)
 	text = render_review_markdown([attention_report, new_report], since_days=7)
 	assert text.startswith("# Last 7 day(s)")
-	assert "## Needs attention (1)" in text
-	assert "## New this period (1)" in text
-	assert "## Moved forward" not in text
+	assert "## Needs a decision now (1)" in text
+	assert "## Started this week (1)" in text
+	assert "## Moved this week" not in text
 	assert "- **attention** _(new, dirty)_ —" in text
-	assert "  - Signals: 1 commit(s), 0 substantive prompt(s)" in text
+	assert "  - Start with:" in text
+	assert "  - Look at:" in text
 	assert text.count("**attention**") == 1
 	assert "| Project |" not in text

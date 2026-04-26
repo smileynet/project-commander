@@ -315,90 +315,66 @@ Flags surface conditions you'd otherwise have to spot manually.
 `procedural-prompts` is *not* a defect — it tells you *"I'm approving
 an agent here, not directing it."* Useful as a usage-shape signal.
 
-## Outstanding + First action
+## Where to inspect + Raw sources
 
-> `Outstanding` is the evidence block. `First action` is the decision surface.
-
-Where flags describe a *condition*, *Outstanding* describes the concrete unresolved work signals underneath it. The detail view keeps the full Outstanding block even after the top summary already told you what to do next:
+The detail markdown now separates **direction** from **source trail**:
 
 ```
-  Outstanding
-    git      8 uncommitted file(s) (M src/foo.py, A tests/x.py, ...)
-             branch main is 1 commit ahead of origin/main
-    plan     PLAN.md: 3 unchecked item(s); next: "Add CI workflow"
-    thread   last prompt 24h ago has no follow-up commit
+  Resume this project.
+  State: Hot · 9h ago.
+  Workstream: profiling/comparison pipeline work.
+  Why stopped: work is still only in the working tree.
+  First action: Commit 13 uncommitted file(s).
+
+  Where to inspect
+    Plan doc         .sisyphus/plans/optimal-plan-forward.md
+    Prompt thread    2026-04-24 opencode — review state and determine optimal plan forward
+    Git history      latest 2026-04-23 — Add baseline regression comparison tool
+    Working tree     13 uncommitted file(s) (...)
 ```
 
-The top brief turns those signals into a first move:
+The top block is no longer an evidence digest. It is a resume brief plus a **source guide**: if you want to inspect the raw material, it points you at the most relevant plan doc, prompt thread, commit history, and working-tree state.
+
+Below that, the detail report carries a smaller **Raw sources** section rather than a long mixed audit trail:
 
 ```
-  First action: Resolve the next plan item: Add CI workflow. Then commit 8 uncommitted file(s).
+  Raw sources
+    Git history     last 5 commits
+    Prompt thread   last 3 substantive prompts (+ approval count)
+    Sessions        last 2 session boundaries
+    Plan docs       recent planning / identity docs
 ```
 
-Sources, in order:
-
-- **git**: `status --porcelain` for uncommitted files (count + first 3
-  examples), `rev-list --left-right --count <upstream>...HEAD` for
-  ahead/behind once an upstream tracking ref exists.
-- **plan**: `PLAN.md` / `NEXT_STEPS.md` / `TODO.md` /
-  `IMPROVEMENTS.md` / `ROADMAP.md` are parsed for `- [ ]` checkboxes
-  and roman-numeral / `Phase N` headings. The doc with the highest
-  planning authority score wins the *next-item* slot.
-- **thread**: latest substantive (non-procedural) prompt is
-  *orphaned* if it sits 4 hours to 7 days old with no commit landing
-  after it. Below 4 hours we assume mid-conversation; past 7 days the
-  thread is just history.
-
-Drift still wins: when plan docs say complete but code continued moving, reconciliation comes before any other action.
-
-Drift always wins: the plan needs reconciliation before any other
-work matters.
+Drift still wins: when plan docs say complete but code continued moving, reconciliation comes before any other action. The source guide should point the reader straight at the doc and commit trail that disagree.
 
 ## Period in review (`--since N`)
 
-When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first digest with *exclusive primary placement*: one project appears in one major section, and cross-cutting facts show up as badges or detail lines rather than duplicate rows.
+When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first digest with **exclusive primary placement** and **source-oriented follow-up**: one project appears in one major section, and every row tells the reader where to look next rather than making them infer it from counts alone.
 
 ```
   Last 7 day(s) — since 2026-04-19
 
-  Needs attention (4)
+  Needs a decision now (4)
     cdda_improved (new, dirty) — Advanced profiling/comparison scenarios and comparison tooling.
+      Start with: Commit 13 uncommitted file(s).
+      Look at: plan `.sisyphus/plans/optimal-plan-forward.md`; prompt `2026-04-24`; latest commit `2026-04-23`.
 
-      10 commit(s), 8 substantive prompt(s)
-      Needs attention: benchmark methodology gap remains open. Work is still only in the working tree.
-
-  Moved forward (7)
-    project-commander — Reframed reports around hidden work state.
-
-      3 commit(s), 2 substantive prompt(s)
+  Started this week (3)
+    oh-my-openagent (new) — Advanced Kimi Code subscription link and price, Preserve migration history during config migration, and OpenAI defaults to GPT-5.5.
+      Look at: prompt `2026-04-23`; latest commit `2026-04-26`.
 ```
 
 The weekly digest now answers three questions, in this order:
 
-- **Needs attention** — *what needs a decision or safe resume before anything else?*
-- **Moved forward** — *what materially advanced this week?*
-- **New this period** — *what started this week without already needing attention?*
+- **Needs a decision now** — *what needs a safe resume or explicit decision before anything else?*
+- **Moved this week** — *what materially advanced this week without already needing intervention?*
+- **Started this week** — *what became active this week?*
 
-Headline rule: **outcome first, counts second**. The row should tell the reader what happened before it tells them how many commits or prompts produced it.
+Headline rule: **outcome first, source pointer second**. Counts remain available internally, but the weekly row should first tell the reader what changed and where to inspect the underlying thread/doc/history.
 
-Prompt counts in weekly rows are **substantive prompts** only — procedural approvals (`yes`, `proceed`, `continue`) do not headline the week’s story.
+Prompt counts in weekly classification still use **substantive prompts** only — procedural approvals (`yes`, `proceed`, `continue`) do not headline the week’s story.
 
 Each section caps at 12 rows with `… +N more` overflow. JSON stays flat for downstream consumers; markdown now follows the digest shape too when `--since N` is used, so the shareable artifact answers the same Monday-morning triage questions as the terminal view.
-
-
-## Evidence: every claim is auditable
-
-The detail view always ends with a one-line evidence trail:
-
-```
-  Evidence: doc:PLAN.md; recent prompt within 0d;
-            last action: git:commit;
-            plan-drift: doc says complete, 5 commits since
-```
-
-Every interpreted line in the report can be traced back to specific
-signals. If the headline says **Drifting**, the evidence says *which*
-doc, *which* phrase triggered it, and *how many* commits came after.
 
 ## Tidy: hygiene actions
 
