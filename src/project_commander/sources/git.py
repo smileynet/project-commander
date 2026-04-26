@@ -38,9 +38,41 @@ class GitScanner:
         out = self._run(project, "branch", "--show-current")
         return out.strip() if out else None
 
-    def is_dirty(self, project: Path) -> bool:
+    def status_porcelain(self, project: Path) -> list[str]:
+        """Return per-line `git status --porcelain` output.
+
+        Each entry is e.g. ` M src/foo.py`, `?? newfile`, `A  tests/x.py`. Empty list
+        means the tree is clean.
+        """
         out = self._run(project, "status", "--porcelain")
-        return bool(out and out.strip())
+        if not out:
+            return []
+        return [line for line in out.splitlines() if line.strip()]
+
+    def is_dirty(self, project: Path) -> bool:
+        return bool(self.status_porcelain(project))
+
+    def upstream(self, project: Path) -> str | None:
+        """Return the tracking ref (e.g. 'origin/main') for the current branch, or None."""
+        out = self._run(project, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+        if not out:
+            return None
+        ref = out.strip()
+        return ref or None
+
+    def ahead_behind(self, project: Path, upstream: str) -> tuple[int, int]:
+        """Return `(ahead, behind)` commit counts vs the named upstream tracking ref."""
+        out = self._run(project, "rev-list", "--left-right", "--count", f"{upstream}...HEAD")
+        if not out:
+            return (0, 0)
+        parts = out.split()
+        if len(parts) != 2:
+            return (0, 0)
+        try:
+            behind, ahead = int(parts[0]), int(parts[1])
+        except ValueError:
+            return (0, 0)
+        return (ahead, behind)
 
     def scan(self, project: Path) -> list[Signal]:
         if not self.is_repo(project):

@@ -141,6 +141,8 @@ def _run_report(args: argparse.Namespace) -> int:
         sys.stdout.write(report.render_json(reports) + "\n")
     elif args.format == "markdown":
         sys.stdout.write(report.render_markdown(reports))
+    elif args.since is not None and args.since <= 30:
+        report.render_review(reports, since_days=args.since, console=console)
     else:
         report.render_table(reports, console)
     return 0

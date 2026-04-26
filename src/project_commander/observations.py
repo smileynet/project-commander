@@ -26,6 +26,87 @@ from typing import Iterable
 from .models import ProjectReport, Signal
 
 
+# ─── prose cleanup ----------------------------------------------------------
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+# Catches a `<` that opens a tag whose closing `>` was lost to truncation.
+_DANGLING_TAG_RE = re.compile(r"<[a-zA-Z][^>]*$")
+_CODE_FENCE_RE = re.compile(r"```[^`]*```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)([^*\n]+)\*(?!\*)")
+# Match blockquote markers either at line start (multiline) OR after whitespace mid-string,
+# so flattened-to-one-line summaries (e.g. `> A > > B > C`) get every marker stripped, not just the first.
+_BLOCKQUOTE_RE = re.compile(r"(?:^|\s)>+\s?", re.MULTILINE)
+_HEADING_RE = re.compile(r"^\s*#+\s+", re.MULTILINE)
+_LIST_MARKER_RE = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
+_GH_CALLOUT_RE = re.compile(r"\[!(?:TIP|NOTE|WARNING|IMPORTANT|CAUTION)\]\s*", re.IGNORECASE)
+_FRONTMATTER_PREFIX_RE = re.compile(
+    r"^\s*(?:date|status|author|title|tags|category|published|updated)\s*[:\-]\s*[^\n]*\n",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Strip a leading `Key:` / `**Key:**` prefix when the key is metadata-flavored
+# and substantive prose follows on the same line.
+_LEADING_META_PREFIX_RE = re.compile(
+    r"^\s*\*?\*?(?:date|status|author|title|tags|category|published|updated|version)\*?\*?\s*[:\-]\s*",
+    re.IGNORECASE,
+)
+_DOC_TAG_RE = re.compile(r"^\s*\[[^\]]+\]\s*")
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])(?:\s+(?=[A-Z\"'(\[])|\s*$)")
+
+
+def clean_doc_prose(text: str) -> str:
+    """Strip markdown / HTML chrome from doc prose so it reads as plain text."""
+    if not text:
+        return ""
+    cleaned = _CODE_FENCE_RE.sub(" ", text)
+    # HTML tags first \u2014 their `<...>` syntax conflicts with the blockquote `>` strip below.
+    cleaned = _HTML_TAG_RE.sub(" ", cleaned)
+    cleaned = _DANGLING_TAG_RE.sub("", cleaned)
+    cleaned = _FRONTMATTER_PREFIX_RE.sub("", cleaned)
+    cleaned = _HEADING_RE.sub("", cleaned)
+    cleaned = _LIST_MARKER_RE.sub("", cleaned)
+    cleaned = _GH_CALLOUT_RE.sub("", cleaned)
+    cleaned = _BOLD_RE.sub(r"\1", cleaned)
+    cleaned = _ITALIC_RE.sub(r"\1", cleaned)
+    cleaned = _INLINE_CODE_RE.sub(r"\1", cleaned)
+    # Now that HTML is gone, any remaining `>+` runs are blockquote chrome.
+    cleaned = re.sub(r">+", " ", cleaned)
+    cleaned = _LEADING_META_PREFIX_RE.sub("", cleaned)
+    return " ".join(cleaned.split())
+
+
+def first_sentence(text: str, *, limit: int) -> str:
+    """Return one or more leading sentences \u2264 limit chars; fall back to word-truncate.
+
+    The point: 'truncated at character N' breaks mid-clause and tells the reader
+    nothing useful. A sentence boundary guarantees a thought completes. We greedily
+    accumulate sentences while they fit in budget, so a short opener like
+    'Yes.' or 'Status: experimental.' doesn't strand the rest of the paragraph.
+    """
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    # Search a window slightly past `limit` so we can complete a sentence that ends just over.
+    window = text[: limit + 80]
+    last_good_end = 0
+    for m in _SENTENCE_END_RE.finditer(window):
+        end = m.start() + 1
+        candidate = window[:end].strip()
+        if len(candidate) > limit:
+            break
+        last_good_end = end
+        # Stop once the running prefix is substantive enough on its own.
+        if len(candidate) >= 60:
+            return candidate
+    if last_good_end and last_good_end <= limit:
+        return window[:last_good_end].strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rsplit(" ", 1)[0] + "\u2026"
+
+
+
 # ─── progress state ──────────────────────────────────────────────────────────
 
 class Progress(str, Enum):
@@ -80,6 +161,52 @@ class ActivityWindow:
         return self.commits + self.prompts + self.sessions
 
 
+# \u2500\u2500\u2500 outstanding work --------------------------------------------------------
+
+@dataclass(frozen=True)
+class Outstanding:
+    """Forward-looking work the project still has on its plate."""
+
+    git_uncommitted_count: int = 0
+    git_ahead: int = 0
+    git_behind: int = 0
+    git_examples: tuple[str, ...] = ()       # first few uncommitted entries
+    git_upstream: str | None = None
+    plan_open_count: int = 0                 # unchecked checkboxes across plan docs
+    plan_open_phases: int = 0                # phases not yet marked complete
+    plan_next: str = ""                      # first unchecked item / current phase
+    plan_doc_ref: str = ""                   # the doc that produced plan_next
+    orphaned_thread_age_hours: int | None = None  # latest substantive prompt with no follow-up commit
+
+    @property
+    def is_empty(self) -> bool:
+        return (
+            self.git_uncommitted_count == 0
+            and self.git_ahead == 0
+            and self.git_behind == 0
+            and self.plan_open_count == 0
+            and self.plan_open_phases == 0
+            and self.orphaned_thread_age_hours is None
+        )
+
+    @property
+    def headline(self) -> str:
+        """One-token summary suitable for a narrow column."""
+        if self.git_uncommitted_count > 0:
+            return f"dirty {self.git_uncommitted_count}"
+        if self.git_ahead > 0:
+            return f"ahead {self.git_ahead}"
+        if self.git_behind > 0:
+            return f"behind {self.git_behind}"
+        if self.plan_open_count > 0:
+            return f"plan {self.plan_open_count}"
+        if self.plan_open_phases > 0:
+            return f"phase {self.plan_open_phases}"
+        if self.orphaned_thread_age_hours is not None:
+            return "orphan"
+        return "\u2014"
+
+
 # ─── observation record ──────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -99,6 +226,8 @@ class Observations:
     window_90d: ActivityWindow = field(default_factory=lambda: ActivityWindow(90, 0, 0, 0, 0))
     flags: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
+    outstanding: Outstanding = field(default_factory=Outstanding)
+    next_action: str = ""       # synthesized one-line next step
 
 
 # ─── builders ────────────────────────────────────────────────────────────────
@@ -167,15 +296,21 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
     w30 = _window(sigs, now=now, days=30)
     w90 = _window(sigs, now=now, days=90)
 
-    drift = _detect_plan_drift(sigs)
-    flags = _flags(report, sigs, w30=w30, drift=drift, focus_kind=focus_kind, focus=focus)
+    drift_info = _detect_plan_drift(sigs)
+    drift_count = drift_info[0] if drift_info else None
+    drift_doc = drift_info[1] if drift_info else None
+    flags = _flags(report, sigs, w30=w30, drift=drift_count, focus_kind=focus_kind, focus=focus)
 
-    progress = _classify_progress(report, sigs, w7=w7, w30=w30, w90=w90, drift=drift,
+    progress = _classify_progress(report, sigs, w7=w7, w30=w30, w90=w90, drift=drift_count,
                                   has_purpose=bool(purpose), focus_kind=focus_kind)
     progress_summary = _progress_summary(report, progress, w7=w7, w30=w30, w90=w90,
-                                         last_action_at=last_action_at, drift=drift)
+                                         last_action_at=last_action_at, drift=drift_count)
 
     intent = _compose_intent(purpose, focus, focus_kind, last_action, progress)
+    outstanding = _build_outstanding(report, sigs, now=now)
+    next_action = _next_action(report, progress, outstanding=outstanding,
+                               drift_count=drift_count, drift_doc=drift_doc,
+                               focus_kind=focus_kind)
 
     evidence: list[str] = []
     if purpose_evidence:
@@ -185,8 +320,8 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
         evidence.append(f"recent prompt within {_d if _d is not None else '?'}d")
     if last_action_source:
         evidence.append(f"last action: {last_action_source}")
-    if drift is not None:
-        evidence.append(f"plan-drift: doc says complete, {drift} commits since")
+    if drift_count is not None:
+        evidence.append(f"plan-drift: doc says complete, {drift_count} commits since")
 
     return Observations(
         purpose=purpose,
@@ -200,6 +335,8 @@ def build(report: ProjectReport, *, now: datetime | None = None) -> Observations
         window_7d=w7, window_30d=w30, window_90d=w90,
         flags=tuple(flags),
         evidence=tuple(evidence),
+        outstanding=outstanding,
+        next_action=next_action,
     )
 
 
@@ -215,12 +352,13 @@ def _extract_purpose(sigs: Iterable[Signal]) -> tuple[str, str]:
         return _DOC_AUTHORITY.get(name, 0), s.timestamp
 
     best = max(docs, key=score)
-    # `summary` is `[<rel-path>] <prose>` — strip the bracketed prefix for prose.
+    # `summary` is `[<rel-path>] <prose>` — strip the bracketed prefix.
     text = best.summary
     if text.startswith("["):
         end = text.find("] ")
         if end != -1:
             text = text[end + 2 :]
+    text = clean_doc_prose(text)
     return text, f"doc:{best.ref}"
 
 
@@ -280,9 +418,9 @@ def _window(sigs: Iterable[Signal], *, now: datetime, days: int) -> ActivityWind
                           sessions=sessions, distinct_days=len(days_seen))
 
 
-def _detect_plan_drift(sigs: list[Signal]) -> int | None:
+def _detect_plan_drift(sigs: list[Signal]) -> tuple[int, str] | None:
     """If the highest-authority doc declares completion AND commits exist after
-    the doc's mtime, return the number of post-doc commits. Else None.
+    the doc's mtime, return `(post_doc_commit_count, doc_ref)`. Else None.
     """
     docs = [s for s in sigs if s.kind == "doc"]
     if not docs:
@@ -291,7 +429,9 @@ def _detect_plan_drift(sigs: list[Signal]) -> int | None:
     if not _DONE_PHRASES.search(best.summary):
         return None
     later = [s for s in sigs if s.kind == "commit" and s.timestamp > best.timestamp]
-    return len(later) if later else None
+    if not later:
+        return None
+    return (len(later), best.ref or "plan doc")
 
 
 def _flags(report: ProjectReport, sigs: list[Signal], *,
@@ -362,7 +502,7 @@ def _progress_summary(report: ProjectReport, progress: Progress, *,
                       last_action_at: datetime | None,
                       drift: int | None) -> str:
     last = report.last_active
-    age = _humanize_delta(datetime.now(tz=timezone.utc) - last) if last else "\u2014"
+    age = _humanize_delta(datetime.now(tz=timezone.utc) - last) if last else "—"
     base = {
         Progress.HOT: f"Touched today across {w7.distinct_days} day(s); "
                       f"{w7.commits} commit(s), {w7.prompts} prompt(s) this week.",
@@ -373,9 +513,9 @@ def _progress_summary(report: ProjectReport, progress: Progress, *,
         Progress.DORMANT: f"Dormant; last touched {age}.",
         Progress.SHIPPED: f"Last commit {age}; plan complete and clean tree.",
         Progress.DRIFTING: (f"Plan doc declares complete, but {drift} commit(s) "
-                            f"have landed since \u2014 review intent."),
+                            f"have landed since — review intent."),
         Progress.TRACKING: f"Only upstream-style commits; last {age}.",
-        Progress.STUB: "Documentation only \u2014 no commits or agent prompts observed.",
+        Progress.STUB: "Documentation only — no commits or agent prompts observed.",
         Progress.EMPTY: "No signals observed for this folder.",
     }
     return base.get(progress, "")
@@ -412,11 +552,116 @@ def _compose_intent(purpose: str, focus: str, focus_kind: str,
 
 # ─── small utilities ─────────────────────────────────────────────────────────
 
+# \u2500\u2500\u2500 helpers: outstanding + next-action ---------------------------------------
+
+# Minimum hours since the latest substantive prompt before we call its thread
+# 'orphaned' \u2014 below this we're probably mid-conversation.
+_ORPHAN_MIN_HOURS = 4
+_ORPHAN_MAX_DAYS = 7
+
+
+def _build_outstanding(report: ProjectReport, sigs: list[Signal], *, now: datetime) -> Outstanding:
+    """Pull the forward-looking work signals into one struct."""
+    # Plan-doc aggregation
+    plan_open_count = 0
+    plan_open_phases = 0
+    plan_next = ""
+    plan_doc_ref = ""
+    if report.plan_summaries:
+        # Sort doc refs by authority so the highest-priority next-item wins.
+        ranked = sorted(
+            report.plan_summaries.items(),
+            key=lambda kv: -_DOC_AUTHORITY.get(kv[0], 0),
+        )
+        for path, summary in ranked:
+            plan_open_count += summary.open_items
+            plan_open_phases += max(0, summary.total_phases - summary.complete_phases)
+            if not plan_next and summary.next_item:
+                plan_next = summary.next_item
+                plan_doc_ref = path
+        if not plan_next and plan_open_phases > 0:
+            # Fall back to surfacing the first incomplete phase by authority.
+            for path, summary in ranked:
+                if summary.total_phases > summary.complete_phases:
+                    plan_next = f"phase {summary.complete_phases + 1} of {summary.total_phases}"
+                    plan_doc_ref = path
+                    break
+
+    # Orphaned-thread detection: latest substantive prompt with no later commit.
+    orphan_hours: int | None = None
+    substantive = [s for s in sigs
+                   if s.kind == "prompt" and not _PROCEDURAL_RE.match(s.summary.strip())]
+    if substantive:
+        latest = max(substantive, key=lambda s: s.timestamp)
+        delta = now - latest.timestamp
+        if (timedelta(hours=_ORPHAN_MIN_HOURS) <= delta <= timedelta(days=_ORPHAN_MAX_DAYS)):
+            commits_after = any(s.kind == "commit" and s.timestamp > latest.timestamp for s in sigs)
+            if not commits_after:
+                orphan_hours = int(delta.total_seconds() / 3600)
+
+    return Outstanding(
+        git_uncommitted_count=len(report.git_uncommitted),
+        git_ahead=report.git_ahead,
+        git_behind=report.git_behind,
+        git_examples=tuple(report.git_uncommitted[:3]),
+        git_upstream=report.git_upstream,
+        plan_open_count=plan_open_count,
+        plan_open_phases=plan_open_phases,
+        plan_next=plan_next,
+        plan_doc_ref=plan_doc_ref,
+        orphaned_thread_age_hours=orphan_hours,
+    )
+
+
+def _next_action(report: ProjectReport, progress: Progress, *,
+                 outstanding: Outstanding,
+                 drift_count: int | None, drift_doc: str | None,
+                 focus_kind: str) -> str:
+    """Synthesize a one-line 'what to do next' from progress + outstanding work."""
+    o = outstanding
+    # Drifting trumps everything: the plan needs reconciliation first.
+    if drift_count is not None:
+        ref = drift_doc or o.plan_doc_ref or "the plan doc"
+        return (f"Reconcile {ref}: it says complete but "
+                f"{drift_count} commit(s) have landed since. Update or remove the completion marker.")
+    if not report.is_git_repo and progress is not Progress.EMPTY:
+        return "Run `project-commander tidy` to init this folder as a git repo."
+    pieces: list[str] = []
+    if o.git_uncommitted_count > 0:
+        pieces.append(f"commit {o.git_uncommitted_count} uncommitted file(s)")
+    if o.git_ahead > 0 and o.git_upstream:
+        pieces.append(f"push {o.git_ahead} commit(s) to {o.git_upstream}")
+    elif o.git_ahead > 0:
+        pieces.append(f"push {o.git_ahead} unpushed commit(s)")
+    if o.git_behind > 0 and o.git_upstream:
+        pieces.append(f"pull {o.git_behind} commit(s) from {o.git_upstream}")
+    if not pieces:
+        if o.orphaned_thread_age_hours is not None:
+            return ("Resume the last prompt thread or commit progress "
+                    f"({o.orphaned_thread_age_hours}h since last prompt, no follow-up commit).")
+        if o.plan_next and progress in (Progress.HOT, Progress.ACTIVE):
+            ref = f" ({o.plan_doc_ref})" if o.plan_doc_ref else ""
+            return f"Pick up the next plan item{ref}: {_trim(o.plan_next, 100)}."
+        if progress is Progress.PAUSED:
+            return "Decide whether to resume or stash this project."
+        if progress is Progress.SHIPPED:
+            return "No action \u2014 shipped and clean."
+        if progress is Progress.STUB:
+            return "Either start work or remove this folder."
+        if progress is Progress.EMPTY:
+            return "Either populate this folder or remove it."
+        if progress in (Progress.IDLE, Progress.DORMANT):
+            return "No active work \u2014 archive or revisit."
+        return ""
+    return "Then ".join([p[0].upper() + p[1:] for p in pieces]) + "."
+
+
+
 def _trim(text: str, limit: int) -> str:
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    return text[: limit - 1].rsplit(" ", 1)[0] + "\u2026"
+    return text[: limit - 1].rsplit(" ", 1)[0] + "…"
 
 
 def _latest(sigs: Iterable[Signal], kind: str) -> datetime | None:

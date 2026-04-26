@@ -13,14 +13,50 @@ each piece. For module-level internals, read the source.
 
 ## Report key
 
-A row in the fleet table looks like this:
+Rows are grouped by attention band — *Needs attention* first, then *Active*,
+then *Quiet*. Within a band, rows sort by recency.
 
 ```
-  Project              Last active   Progress   Sources   Git       Intent
-  ───────────────────  ────────────  ─────────  ────────  ────────  ─────────────────────
-  cdda_improved        5h ago        Hot        DGOP      master*   Cataclysm: Dark Days…
-                                                                    Currently: review state
+  Project              State          Outstanding   Sources   Git       Intent
+  ───────────────────  ─────────────  ────────────  ────────  ────────  ─────────────────────
+  cdda_improved        Hot · 7h        dirty 13      DGOP      master*   Cataclysm: Dark Days Ahead is a turn-based…
 ```
+
+### State column
+
+Combines progress and last-active recency into one cell, formatted
+`{progress} · {age}`. Frees a column for Outstanding while preserving
+both axes.
+
+```
+  Hot · 35m       Hot, last touched 35 minutes ago
+  Active · 1d     Active, last touched 1 day ago
+  Drifting · 4d   Drifting, last touched 4 days ago
+  Idle · 4w       Idle, last touched ~4 weeks ago
+```
+
+Color encodes attention pressure, not just progress: a clean *Hot*
+renders calmer than *Drifting* or *Hot + dirty*.
+
+### Outstanding column
+
+What needs to happen on this project, in one token. Pulled from git
+state and plan-doc structure; this column drives the *Next* line in
+the detail view.
+
+```
+  dirty N         N uncommitted files in the work tree
+  ahead N         N commits HEAD has that the upstream tracking ref lacks
+  behind N        N commits the upstream has that HEAD lacks
+  plan N          N unchecked items in the highest-authority plan doc
+  phase N         N plan-doc phases not yet marked complete
+  orphan          most recent substantive prompt has no follow-up commit
+  —               clean: no uncommitted work, no unpushed commits, no orphan thread
+```
+
+Headline priority is dirty > ahead > behind > plan > phase > orphan.
+If multiple conditions hold, the most-actionable one wins; the
+detail view always shows the full list.
 
 ### Sources column
 
@@ -28,7 +64,7 @@ Each letter means one tool has touched this project recently. The
 order in the cell is alphabetical, not ranked.
 
 ```
-  G   git              commits, branch, dirty flag
+  G   git              commits, branch, dirty flag, ahead/behind
   C   Claude Code      prompts from ~/.claude/projects/
   M   geMini CLI       prompts from ~/.gemini/tmp/
   O   Oh-My-Pi         sessions from ~/.omp/agent/sessions/
@@ -57,16 +93,14 @@ Reading examples:
   —              not a git repo
 ```
 
-### Last active
-
-Resolves to the most recent observed event from any source. Coarsens
-as it ages — `0m`, `5h`, `3d`, `4w`, then ISO date past a year.
-
 ### Intent
 
 `<purpose> Currently: <focus>` — purpose pulled from the project's
-plan doc, focus pulled from the most recent substantive prompt. See
-[Intent](#intent-purpose--focus) below.
+highest-authority plan doc, focus pulled from the most recent
+substantive prompt. Markdown chrome (callouts, blockquote markers,
+HTML, inline metadata prefixes) is stripped before display so the
+cell reads as plain prose. Truncation lands at a sentence boundary,
+not a character count. See [Intent](#intent-purpose--focus) below.
 
 ### Progress
 
@@ -274,6 +308,99 @@ Flags surface conditions you'd otherwise have to spot manually.
 
 `procedural-prompts` is *not* a defect — it tells you *"I'm approving
 an agent here, not directing it."* Useful as a usage-shape signal.
+
+## Outstanding: what still needs to happen
+
+Where flags describe a *condition*, *Outstanding* describes the
+*work*. The detail view always carries an Outstanding block:
+
+```
+  Outstanding
+    git      8 uncommitted file(s) (M src/foo.py, A tests/x.py, ...)
+             branch main is 1 commit ahead of origin/main
+    plan     PLAN.md: 3 unchecked item(s); next: "Add CI workflow"
+    thread   last prompt 24h ago has no follow-up commit
+
+  Next: Commit 8 uncommitted file(s). Then push 1 commit to origin/main.
+```
+
+Sources, in order:
+
+- **git**: `status --porcelain` for uncommitted files (count + first 3
+  examples), `rev-list --left-right --count <upstream>...HEAD` for
+  ahead/behind once an upstream tracking ref exists.
+- **plan**: `PLAN.md` / `NEXT_STEPS.md` / `TODO.md` /
+  `IMPROVEMENTS.md` / `ROADMAP.md` are parsed for `- [ ]` checkboxes
+  and roman-numeral / `Phase N` headings. The doc with the highest
+  authority score wins the *next-item* slot.
+- **thread**: latest substantive (non-procedural) prompt is
+  *orphaned* if it sits 4 hours to 7 days old with no commit landing
+  after it. Below 4 hours we assume mid-conversation; past 7 days the
+  thread is just history.
+
+## Next: the synthesized step
+
+Both the detail view and the markdown handoff end with a `Next:`
+line that turns the Outstanding block into a single imperative
+sentence:
+
+```
+  drift fired              →  "Reconcile PLAN.md: it says complete but 5 commits
+                                have landed since. Update or remove the completion
+                                marker."
+  no git, has signals      →  "Run `project-commander tidy` to init this folder
+                                as a git repo."
+  dirty + ahead            →  "Commit N uncommitted file(s). Then push M commit(s)
+                                to origin/main."
+  clean Hot/Active + plan  →  "Pick up the next plan item (PLAN.md): …"
+  Paused                   →  "Decide whether to resume or stash this project."
+  Shipped / clean          →  "No action — shipped and clean."
+```
+
+Drift always wins: the plan needs reconciliation before any other
+work matters.
+
+## Period in review (`--since N`)
+
+When `--since` is set with `N ≤ 30`, the report switches from a
+fleet table to a four-section digest tuned to the Monday-morning
+JTBD:
+
+```
+  Last 7 day(s) — since 2026-04-19
+
+  Moved forward (5)
+    project-commander       10c 8p   multi-root cleanup
+    cdda_improved            5c 12p  review state of project
+    …
+
+  Parked dirty (decide) (3)
+    PrusaSlicer              dirty 6f   idle 22d
+    agentic_enterprise       dirty 31f  idle 52d
+    alpha                    no-git     idle  9d
+
+  Flagged (1)
+    best_practices           plan-drift  doc says complete, 5 commits since
+
+  New this period (1)
+    hey-ate-training         first Tue   first commit landed during the window
+```
+
+Each section answers a different question:
+
+- **Moved forward** — *what did I touch?* commits + non-procedural
+  prompts during the window, sorted by total activity
+- **Parked dirty** — *what needs a decision?* dirty trees idle for \u2265 2
+  days, plus folders with content but no git
+- **Flagged** — *what's anomalous?* plan-drift, prompt-injection-detected,
+  upstream-only, tool-cluster
+- **New this period** — *what's new?* projects whose first observed
+  commit landed inside the window
+
+Each section caps at 12 rows with `… +N more` overflow. JSON and
+markdown output formats keep the flat fleet shape regardless of
+`--since` so downstream consumers stay simple.
+
 
 ## Evidence: every claim is auditable
 

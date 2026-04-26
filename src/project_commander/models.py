@@ -24,6 +24,18 @@ Source = Literal["git", "claude", "gemini", "omp", "opencode", "kiro", "docs", "
 
 
 @dataclass(frozen=True)
+class PlanDocSummary:
+    """Structured view of a plan/todo document."""
+
+    path: str                  # rel-path inside the project (e.g. 'PLAN.md')
+    total_items: int = 0       # count of `- [ ]` / `- [x]` checkbox items
+    open_items: int = 0        # unchecked checkboxes
+    total_phases: int = 0      # roman-numeral or 'Phase N' headings
+    complete_phases: int = 0   # phase headings marked complete
+    next_item: str = ""        # first unchecked checkbox text
+
+
+@dataclass(frozen=True)
 class Signal:
     """A single observation about a project."""
 
@@ -58,6 +70,11 @@ class ProjectReport:
     git_dirty: bool = False
     is_git_repo: bool = False
     observations: "object | None" = None  # populated by aggregator; observations.Observations
+    git_ahead: int = 0                    # commits HEAD has that upstream lacks
+    git_behind: int = 0                   # commits upstream has that HEAD lacks
+    git_upstream: str | None = None       # tracking ref, e.g. 'origin/main'
+    git_uncommitted: list[str] = field(default_factory=list)  # ['M src/foo.py', ...]
+    plan_summaries: dict[str, PlanDocSummary] = field(default_factory=dict)
 
     @property
     def last_active(self) -> datetime | None:

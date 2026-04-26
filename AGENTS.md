@@ -15,11 +15,14 @@ src/project_commander/
 ├── cli.py            argparse, default config, scanner construction, dispatch
 ├── discovery.py      walk project root(s), basename glob filter
 ├── paths.py          per-tool cwd → session-key translations (pure functions)
-├── models.py         Signal (frozen, UTC-enforced), ProjectReport
+├── models.py         Signal (frozen, UTC-enforced), ProjectReport,
+│                     PlanDocSummary (checkbox + phase counts)
 ├── aggregator.py     build_report, build_all (threadpool fanout)
-├── observations.py   Progress enum, ActivityWindow, build(), heuristics
+├── observations.py   Progress enum, ActivityWindow, Outstanding,
+│                     clean_doc_prose, first_sentence, build()
 ├── tidy.py           hygiene subcommand: init / commit-stale / fetch / push
-├── report.py         render_table / render_detail / render_detail_markdown /
+├── report.py         render_table (grouped fleet) / render_review (period digest) /
+│                     render_detail / render_detail_markdown /
 │                     render_json / render_markdown
 └── sources/
     ├── base.py       SourceScanner protocol (just `scan(project) -> list[Signal]`)
@@ -32,8 +35,11 @@ src/project_commander/
     └── docs.py       in-tree PLAN/README/ROADMAP/NEXT_STEPS/AGENTS/...
 
 tests/
-├── test_scanners.py  synthetic-fixture tests for each scanner + aggregator + observations
-└── test_tidy.py      pure-planner + push-refusal tests for the tidy module
+├── test_scanners.py     synthetic-fixture tests for each scanner + aggregator
+├── test_tidy.py         pure-planner + push-refusal tests for the tidy module
+├── test_roots.py        multi-root discovery + dedup + env-var precedence
+└── test_observations.py chrome stripping, sentence truncation, plan-doc parsing,
+                        Outstanding builder, next-action synthesis
 ```
 
 ## Three-layer transformation

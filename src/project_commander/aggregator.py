@@ -24,11 +24,18 @@ def build_report(project: Path,
     is_repo = False
     branch: str | None = None
     dirty = False
+    uncommitted: list[str] = []
+    upstream: str | None = None
+    ahead = behind = 0
     if git is not None:
         is_repo = git.is_repo(project)
         if is_repo:
             branch = git.branch(project)
-            dirty = git.is_dirty(project)
+            uncommitted = git.status_porcelain(project)
+            dirty = bool(uncommitted)
+            upstream = git.upstream(project)
+            if upstream:
+                ahead, behind = git.ahead_behind(project, upstream)
             signals.extend(git.scan(project))
 
     for scanner in scanners:
@@ -38,9 +45,20 @@ def build_report(project: Path,
             # one bad source shouldn't kill the whole report
             continue
 
+    plan_summaries: dict = {}
+    for scanner in scanners:
+        if hasattr(scanner, "plan_summaries"):
+            try:
+                plan_summaries.update(scanner.plan_summaries(project))
+            except Exception:
+                continue
+
     report = ProjectReport(
         path=project, name=project.name, signals=signals,
         is_git_repo=is_repo, git_branch=branch, git_dirty=dirty,
+        git_ahead=ahead, git_behind=behind, git_upstream=upstream,
+        git_uncommitted=uncommitted,
+        plan_summaries=plan_summaries,
     )
     obs = observations_mod.build(report)
     report.observations = obs
