@@ -73,6 +73,32 @@ plan doc, focus pulled from the most recent substantive prompt. See
 One word per project. See [Progress](#progress-where-the-project-is-in-its-lifecycle)
 below for the full vocabulary.
 
+## Where it scans
+
+There is no single "the" project folder. Both `report` and `tidy`
+resolve roots in this order, taking the first source that yields
+any:
+
+```
+  1.  --root <path>             repeatable on the command line
+  2.  $PROJECT_COMMANDER_ROOTS  os.pathsep-separated paths
+                                (":" on POSIX, ";" on Windows)
+  3.  auto-detect under $HOME   every existing folder named
+                                code, projects, src, dev, work,
+                                repos, git, plus the macOS-cased
+                                Code, Projects, Dev
+```
+
+Auto-detect returns *every* matching folder, in declared order —
+a user with both `~/code` and `~/work` gets both scanned by default.
+Projects are deduped by absolute path, so symlinks pointing at the
+same physical directory yield one entry, not two.
+
+If nothing resolves (no flag, no env var, none of the conventional
+folders exist), the command exits with a friendly error pointing
+at the override knobs.
+
+
 ## What you get
 
 Three views, same underlying data, different shapes.
@@ -263,45 +289,107 @@ Every interpreted line in the report can be traced back to specific
 signals. If the headline says **Drifting**, the evidence says *which*
 doc, *which* phrase triggered it, and *how many* commits came after.
 
-## End-to-end runtime
+## Tidy: hygiene actions
 
-What happens, in order, when you run the tool:
+`project-commander tidy` is the second top-level subcommand. Where
+`report` only reads, `tidy` writes — it applies four narrowly-scoped
+git-hygiene actions that catch the things that slip through the
+cracks of an active project folder:
 
 ```
-  $ project-commander  [--since N]  [--project glob]  [--format json|markdown]
-                       [--exclude glob]  [--limit N]  [--disable source]
+  init           folder has commit-worthy content but no git repo
+                 →  git init  +  git add  +  git commit -m "Initial import"
+
+  commit-stale   git repo with dirty tree, no activity for >= --stale-age days
+                 →  git add -A  +  git commit -m "Checkpoint stale work-in-progress"
+
+  fetch          (--sync only)  refresh remotes without merging
+                 →  git fetch --all --prune
+
+  push           (--push only)  push branches whose unpushed range
+                 contains zero hygiene commits
+                 →  git push <upstream-tracking-ref>
+```
+
+`init` and `commit-stale` are on by default; `--sync` and `--push`
+are explicit opt-ins because they touch the network and remote
+state. `--no-init` / `--no-commit` turn the defaults off; `--dry-run`
+shows the plan without executing.
+
+Every commit `tidy` makes carries a trailer:
+
+```
+  Project-Commander-Hygiene: true
+```
+
+This trailer is the boundary between work and housekeeping. The
+`push` action refuses any branch whose `upstream..HEAD` range
+contains a hygiene commit, so a `commit-stale` checkpoint never
+lands on a remote without you noticing. The trailer is also how
+`tidy` will, in the future, distinguish its own commits from yours
+for any further sweep logic.
+
+Plan and execute are split for testability. `tidy.plan(report,
+config, now)` is a pure function returning `list[PlannedAction]`;
+`tidy.execute_init / execute_commit_stale / execute_fetch /
+execute_push` perform the side effects. Tests exercise the planner
+with synthetic reports and exercise the push refusal against a real
+local bare repo + clone, no network involved.
+
+## End-to-end runtime
+
+What happens, in order, when you run `project-commander report`:
+
+```
+  $ project-commander report  [--since N] [--project glob] [--exclude glob]
+                              [--limit N] [--format json|markdown]
+                              [--disable source] [--root <path>]
+       │
+       │  0.  resolve roots
+       ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  --root flags > $PROJECT_COMMANDER_ROOTS > $HOME auto-detect           │
+  │  dedup by absolute path                                                │
+  └────────────────────────────────────────────────────────────────────────┘
        │
        │  1.  discover
        ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  walk every project root, drop hidden dirs                                          │
-  │  apply --project / --exclude basename globs                             │
-  └─────────────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  walk each root, drop hidden dirs                                      │
+  │  apply --project / --exclude basename globs                            │
+  └────────────────────────────────────────────────────────────────────────┘
        │
        │  2.  fan out  (ThreadPoolExecutor, 8 workers, one task per project)
        ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  for each project, in parallel:                                         │
-  │      run all 7 scanners  →  list[Signal]                                │
-  │      fold into ProjectReport                                            │
-  │      observations.build()  →  Observations                              │
-  └─────────────────────────────────────────────────────────────────────────┘
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  for each project, in parallel:                                       │
+  │      run all 7 scanners  →  list[Signal]                              │
+  │      fold into ProjectReport                                          │
+  │      observations.build()  →  Observations                            │
+  └───────────────────────────────────────────────────────────────────────┘
        │
        │  3.  filter
        ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  apply --since (recency cutoff) and --limit (top N)                     │
-  └─────────────────────────────────────────────────────────────────────────┘
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │  apply --since (recency cutoff) and --limit (top N)                   │
+  └───────────────────────────────────────────────────────────────────────┘
        │
        │  4.  render
        ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │      default                       →  rich table to stdout             │
-  │      --project                     →  per-project detail view          │
-  │      --project + --format markdown →  per-project markdown report      │
-  │      --format json | markdown      →  structured / shareable output    │
-  └─────────────────────────────────────────────────────────────────────────┘
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │      default                       →  rich table to stdout            │
+  │      --project                     →  per-project detail view         │
+  │      --project + --format markdown →  per-project markdown report     │
+  │      --format json | markdown      →  structured / shareable output   │
+  └───────────────────────────────────────────────────────────────────────┘
 ```
+
+`tidy` runs a lighter pipeline: it reuses `discovery` to walk the
+same roots, then runs only the **git scanner** plus a folder-mtime
+check (no need to walk seven scanners to decide hygiene). Each
+`PlannedAction` is rendered into a preview table; without `--dry-run`,
+actions execute in order — init, then commit-stale, then optional
+fetch, then optional push.
 
 Three behavioral guarantees:
 
@@ -316,17 +404,29 @@ Three behavioral guarantees:
 ## What you can ask for
 
 ```
-  project-commander report                       all projects, sorted by recency
-  project-commander report --since 7             only projects active in the last week
-  project-commander report --limit 20            top 20 most-recent
-  project-commander report --project cdda_*      detail view for matching folders
-  project-commander report --exclude pi-*        hide noisy folders
-  project-commander report --format json         structured output
-  project-commander report --format markdown     shareable report
-  project-commander report --disable kiro        skip a source you don't use
-  project-commander report --root /other/path    scan a specific root (repeatable)
+  # report — read only
+  project-commander report                              all projects, sorted by recency
+  project-commander report --since 7                    only projects active in the last week
+  project-commander report --limit 20                   top 20 most-recent
+  project-commander report --project cdda_*             detail view for matching folders
+  project-commander report --exclude pi-*               hide noisy folders
+  project-commander report --format json                structured output
+  project-commander report --format markdown            shareable report
+  project-commander report --disable kiro               skip a source you don't use
+  project-commander report --root /other/path           scan a specific root (repeatable)
 
-  project-commander tidy [--dry-run] [--sync] [--push]
+  # tidy — applies actions; --dry-run shows the plan first
+  project-commander tidy --dry-run                      preview hygiene plan, do nothing
+  project-commander tidy                                run init + commit-stale (default on)
+  project-commander tidy --no-commit                    init only; never auto-commit dirty trees
+  project-commander tidy --stale-age 14                 raise stale threshold from 7 to 14 days
+  project-commander tidy --sync                         + git fetch --all per repo
+  project-commander tidy --push                         + push branches with no hygiene commits
+
+  # roots — same resolution policy for both subcommands
+  project-commander report                              auto-detect $HOME conventions
+  PROJECT_COMMANDER_ROOTS=~/work:~/clients pcmd report  scan two roots from env var
+  pcmd tidy --root ~/work --root ~/personal             scan two roots from flags
 ```
 
 `--project`, `--exclude`, `--disable` repeat. Globs are basename
