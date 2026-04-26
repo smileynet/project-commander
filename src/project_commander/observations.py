@@ -653,7 +653,7 @@ def _next_action(report: ProjectReport, progress: Progress, *,
         if progress in (Progress.IDLE, Progress.DORMANT):
             return "No active work \u2014 archive or revisit."
         return ""
-    return "Then ".join([p[0].upper() + p[1:] for p in pieces]) + "."
+    return ". Then ".join([p[0].upper() + p[1:] for p in pieces]) + "."
 
 
 
