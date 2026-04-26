@@ -227,23 +227,22 @@ The fleet-table `Intent` cell composes two layers:
             "<identity>  Currently: <focus>"
 ```
 
-Identity authority is intentionally different from planning authority: README/ROADMAP-style docs win when present so the stable project identity does not get hijacked by the latest plan doc. Planning docs still feed the detail report’s `Workstream`, `Open issue`, `Why stopped`, and `First action` summary.
+Identity authority is intentionally different from planning authority: README/ROADMAP-style docs win when present so the stable project identity does not get hijacked by the latest plan doc. Planning docs feed the detail report's `What's planned next` section.
 
-"Substantive" means *not* a one-word approval. Procedural prompts
-(`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`)
-are filtered out and surfaced separately as a flag — see below.
+"Substantive" means *not* a one-word approval. Procedural prompts (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`) are filtered out and surfaced separately as a flag \u2014 see below.
 
+## The four-question briefing card
 
-## Workstream + Open issue + Why stopped: the hidden-value synthesis
+The detail view answers four reader questions, in order, with synthesized prose rather than evidence dumps. The headings *are* the questions, so the reader can skim:
 
-The detail view now lifts a resume brief above the raw audit trail:
+1. **What is it?** \u2014 the project's stable identity, sourced from `README` / `ROADMAP` / `AGENTS` (planning docs are intentionally demoted here so the identity line does not flip every plan revision).
+2. **What's been happening?** \u2014 a one-sentence synthesis of the last week of activity. Recent commits get topic-fragmented and joined; falls back to last concrete action or latest prompt when no commits landed.
+3. **Where it stands** \u2014 the unresolved condition that explains the current situation: dirty tree, ahead/behind upstream, orphaned thread, plan-drift, or a clean checkpoint. One synthesized paragraph, not a bulleted evidence list.
+4. **What's planned next** \u2014 the forward-looking direction, sourced from a plan doc when one exists. When workstream synthesis would only repeat \"What's been happening?\", the section degrades gracefully to a `_No plan doc found_` line.
 
-- **Workstream** — the best current line-of-work summary, preferring a recent plan-like doc (`PLAN`, `NEXT_STEPS`, `.sisyphus/plans/...`, etc.) over a generic README blurb.
-- **Open issue** — the unresolved decision, gap, or state mismatch that a reader would otherwise have to infer from plan docs, dirty trees, ahead/behind state, and prompt history.
-- **Why stopped** — why this project needs attention now: dirty working tree, orphaned thread, unpushed commits, upstream drift, or no-git activity.
-- **First action** — the safest next move, synthesized from the unresolved state rather than just replaying raw counts.
+Below those four sections, a `**Your first action:**` callout names the single safest next move (commit, push, pull, init, reconcile). The card closes with a one-line `<sub>Inspect: \u2026</sub>` footer that lists the plan doc, last commit, last prompt, identity doc, and working-tree state \u2014 a pointer trail rather than another evidence section.
 
-This is the JTBD boundary: branch name, dirty count, recent commits, and prompts are still shown, but as evidence. The first screen should answer *"what was this work really about, what is unresolved, why did it stop here, and what do I do first?"* before the reader starts scrolling through raw history.
+This is the JTBD boundary: the reader sitting down to a half-remembered project gets enough synthesis on screen to decide whether to resume, archive, or change direction \u2014 without re-reading recent commits or scanning prompt history.
 
 ## Progress: where the project is in its lifecycle
 
@@ -315,66 +314,54 @@ Flags surface conditions you'd otherwise have to spot manually.
 `procedural-prompts` is *not* a defect — it tells you *"I'm approving
 an agent here, not directing it."* Useful as a usage-shape signal.
 
-## Where to inspect + Raw sources
+## Inspect footer
 
-The detail markdown now separates **direction** from **source trail**:
-
-```
-  Resume this project.
-  State: Hot · 9h ago.
-  Workstream: profiling/comparison pipeline work.
-  Why stopped: work is still only in the working tree.
-  First action: Commit 13 uncommitted file(s).
-
-  Where to inspect
-    Plan doc         .sisyphus/plans/optimal-plan-forward.md
-    Prompt thread    2026-04-24 opencode — review state and determine optimal plan forward
-    Git history      latest 2026-04-23 — Add baseline regression comparison tool
-    Working tree     13 uncommitted file(s) (...)
-```
-
-The top block is no longer an evidence digest. It is a resume brief plus a **source guide**: if you want to inspect the raw material, it points you at the most relevant plan doc, prompt thread, commit history, and working-tree state.
-
-Below that, the detail report carries a smaller **Raw sources** section rather than a long mixed audit trail:
+The card carries one footer line of source pointers, not a section of evidence:
 
 ```
-  Raw sources
-    Git history     last 5 commits
-    Prompt thread   last 3 substantive prompts (+ approval count)
-    Sessions        last 2 session boundaries
-    Plan docs       recent planning / identity docs
+  <sub>Inspect: plan `.sisyphus/plans/optimal-plan-forward.md` \u00b7
+        last commit `2026-04-23` \u00b7
+        last prompt `2026-04-24` (`opencode`) \u00b7
+        identity `README.md` \u00b7
+        working tree (13 files)</sub>
 ```
 
-Drift still wins: when plan docs say complete but code continued moving, reconciliation comes before any other action. The source guide should point the reader straight at the doc and commit trail that disagree.
+If the reader wants the underlying material, the footer points them straight at it. The detail card itself never enumerates raw commits or prompts \u2014 the user can open the listed file or run `git log` directly.
 
 ## Period in review (`--since N`)
 
-When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first digest with **exclusive primary placement** and **source-oriented follow-up**: one project appears in one major section, and every row tells the reader where to look next rather than making them infer it from counts alone.
+When `--since` is set with `N \u2264 30`, the report switches from a fleet table to a scan-first triage digest. The aim is brutal compression: a reader with dozens of projects sees, in seconds, *what needs me, what's new, what moved.*
 
 ```
-  Last 7 day(s) — since 2026-04-19
+  Last 7 day(s)
+  _Since 2026-04-19 \u00b7 28 active project(s) \u00b7 197 commit(s) \u00b7 123 substantive prompt(s)_
 
-  Needs a decision now (4)
-    cdda_improved (new, dirty) — Advanced profiling/comparison scenarios and comparison tooling.
-      Start with: Commit 13 uncommitted file(s).
-      Look at: plan `.sisyphus/plans/optimal-plan-forward.md`; prompt `2026-04-24`; latest commit `2026-04-23`.
+  ## Needs your attention (20)
+  _These have a clear next move. Pick one and finish it._
 
-  Started this week (3)
-    oh-my-openagent (new) — Advanced Kimi Code subscription link and price, Preserve migration history during config migration, and OpenAI defaults to GPT-5.5.
-      Look at: prompt `2026-04-23`; latest commit `2026-04-26`.
+  - **code-knowledge** \u2014 Reconcile AGENTS.md: it says complete but 10 commit(s) have landed since\u2026 _2d ago \u00b7 dirty, ahead, drift._
+  - **dotfiles** \u2014 Pull 7 commit(s) from origin/main. _2h ago \u00b7 behind._
+  \u2026
+
+  ## New this week (8)
+  _Repos that landed in your worktrees for the first time._
+
+  - **kimi-cavekit** _(Wed)_ \u2014 Cavekit into core + 11 phase skills.
+  \u2026
+
+  ## Moved this week (n)
+  _Quiet activity \u2014 commits, prompts, or upstream sync._
 ```
 
-The weekly digest now answers three questions, in this order:
+Three exclusive sections answer the user's three weekly questions:
 
-- **Needs a decision now** — *what needs a safe resume or explicit decision before anything else?*
-- **Moved this week** — *what materially advanced this week without already needing intervention?*
-- **Started this week** — *what became active this week?*
+- **Needs your attention** \u2014 has an actionable open state (dirty / ahead / behind / orphan / drift / no-git). The lead clause is the next-action verb (commit, push, pull, init, reconcile), not a count.
+- **New this week** \u2014 first commit landed in the window.
+- **Moved this week** \u2014 had activity but is in a settled state.
 
-Headline rule: **outcome first, source pointer second**. Counts remain available internally, but the weekly row should first tell the reader what changed and where to inspect the underlying thread/doc/history.
+Each row is one line. The previous \"`Start with:` / `Look at:`\" two-line evidence dump per row was retired \u2014 the inspect footer of the per-project detail report covers the same information for whichever project the reader chooses to resume.
 
-Prompt counts in weekly classification still use **substantive prompts** only — procedural approvals (`yes`, `proceed`, `continue`) do not headline the week’s story.
-
-Each section caps at 12 rows with `… +N more` overflow. JSON stays flat for downstream consumers; markdown now follows the digest shape too when `--since N` is used, so the shareable artifact answers the same Monday-morning triage questions as the terminal view.
+Section caps at 8 rows with `\u2026 +N more` overflow.
 
 ## Tidy: hygiene actions
 

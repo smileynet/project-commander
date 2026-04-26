@@ -412,7 +412,7 @@ def test_recent_changes_skip_low_signal_commit_noise():
 	assert "migration history" in lower
 
 
-def test_render_detail_markdown_surfaces_resume_brief_and_sources():
+def test_render_detail_markdown_uses_four_question_card():
 	now = _now()
 	r = ProjectReport(
 		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
@@ -431,19 +431,31 @@ def test_render_detail_markdown_surfaces_resume_brief_and_sources():
 	)
 	r.observations = build(r, now=now)
 	text = render_detail_markdown(r)
-	assert "> **Workstream:**" in text
-	assert "> **Open issue:**" in text
-	assert "> **Why stopped:**" in text
-	assert "> **First action:**" in text
-	assert "## Where to inspect" in text
-	assert "- **Plan doc:**" in text
-	assert "- **Prompt thread:**" in text
-	assert "## Raw sources" in text
-	assert "### Plan docs" in text
-	assert "### Prompt thread" in text
+	# 4-question briefing card structure
+	assert "### What is it?" in text
+	assert "### What's been happening?" in text
+	assert "### Where it stands" in text
+	assert "### What's planned next" in text
+	# Status header carries state + git + uncommitted count, no per-section dump
+	assert "`main*`" in text
+	assert "1 uncommitted file(s)" in text
+	# 'Where it stands' synthesizes the dirty tree without an evidence list
+	assert "Working tree has 1 uncommitted file(s)." in text
+	# 'What's planned next' references the plan doc and surfaces the first action
+	assert "`PLAN.md`" in text
+	assert "**Your first action:**" in text
+	assert "Repair the benchmark methodology gap" in text
+	# Single-line inspect footer instead of evidence sections
+	assert "<sub>Inspect: " in text
+	assert "plan `PLAN.md`" in text
+	assert "last prompt `" in text
+	# The old evidence-dump headings must NOT appear
+	assert "## Raw sources" not in text
+	assert "### Plan docs" not in text
+	assert "### Prompt thread" not in text
+	assert "### Git history" not in text
 
-
-def test_render_review_markdown_uses_directive_sections_and_source_pointers():
+def test_render_review_markdown_uses_jtbd_triage_sections():
 	now = _now()
 	attention_report = ProjectReport(
 		path=Path("/tmp/attention"), name="attention", is_git_repo=True, git_branch="main",
@@ -461,12 +473,24 @@ def test_render_review_markdown_uses_directive_sections_and_source_pointers():
 	)
 	new_report.observations = build(new_report, now=now)
 	text = render_review_markdown([attention_report, new_report], since_days=7)
+	# Header carries totals so the reader has a quick sense of activity load
 	assert text.startswith("# Last 7 day(s)")
-	assert "## Needs a decision now (1)" in text
-	assert "## Started this week (1)" in text
-	assert "## Moved this week" not in text
-	assert "- **attention** _(new, dirty)_ —" in text
-	assert "  - Start with:" in text
-	assert "  - Look at:" in text
+	assert "active project(s)" in text
+	# Triage taxonomy: 'Needs your attention' (actionable) and 'New this week' (first commit landed)
+	assert "## Needs your attention (1)" in text
+	assert "## New this week (1)" in text
+	# Each section gets a one-line blurb explaining what the section is for
+	assert "_These have a clear next move. Pick one and finish it._" in text
+	assert "_Repos that landed in your worktrees for the first time._" in text
+	# Attention rows lead with the next action, not an evidence list
+	assert "- **attention** \u2014 Commit 1 uncommitted file(s)." in text
+	# New rows include a started-on day hint
+	assert "- **newproj** _(" in text
+	# Each project appears in exactly one section
 	assert text.count("**attention**") == 1
+	assert text.count("**newproj**") == 1
+	# No more 'Look at:' / 'Start with:' two-line evidence dump per row
+	assert "  - Look at:" not in text
+	assert "  - Start with:" not in text
+	# Fleet-table format does not appear in review output
 	assert "| Project |" not in text
