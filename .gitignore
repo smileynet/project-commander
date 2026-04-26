@@ -1,11 +1,50 @@
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
-.venv/
+*.py[cod]
+*$py.class
+*.egg-info/
 build/
 dist/
-*.egg-info/
-.coverage
+.eggs/
+pip-wheel-metadata/
 
-# Generated reports
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / type / lint caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.cache/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Generated reports — produced from your own ~/code activity, never commit
 reports/
