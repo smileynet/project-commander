@@ -52,8 +52,8 @@ def _default_config(home: Path) -> dict:
         "home": home,
     }
 
-
-def _add_report_args(parser: argparse.ArgumentParser) -> None:
+def _add_common_scan_args(parser: argparse.ArgumentParser) -> None:
+    """Args shared by every subcommand that scans the fleet."""
     parser.add_argument("--root", type=Path, action="append", default=[],
                         help="project root to scan (repeatable; default: "
                              "$PROJECT_COMMANDER_ROOTS or auto-detect from "
@@ -61,27 +61,42 @@ def _add_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--home", type=Path, default=Path.home(),
                         help="home directory used to locate tool session stores (default: $HOME)")
     parser.add_argument("--project", action="append", default=[],
-                        help="show detail view for one project (basename glob; repeatable)")
+                        help="basename glob; repeatable")
     parser.add_argument("--exclude", action="append", default=[],
-                        help="exclude project basenames matching glob (repeatable)")
-    parser.add_argument("--since", type=int, default=None,
-                        help="only show projects active within N days")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="cap to top N most recently active")
-    parser.add_argument("--format", choices=["table", "json", "markdown"], default="table")
-    parser.add_argument("--no-color", action="store_true",
-                        help="disable colored output")
+                        help="basename glob to exclude; repeatable")
     parser.add_argument("--max-workers", type=int, default=8,
                         help="parallelism for project scans (default: 8)")
     parser.add_argument("--disable", action="append", default=[],
                         choices=["git", "claude", "gemini", "omp", "opencode", "kiro", "docs"],
                         help="skip a source (repeatable)")
+    parser.add_argument("--no-color", action="store_true",
+                        help="disable colored output")
 
 
-def _run_report(args: argparse.Namespace) -> int:
+def _add_report_args(parser: argparse.ArgumentParser) -> None:
+    _add_common_scan_args(parser)
+    parser.add_argument("--since", type=int, default=None,
+                        help="only show projects active within N days")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="cap to top N most recently active")
+    parser.add_argument("--format", choices=["table", "json", "markdown"], default="table")
+
+
+def resolve_roots(args: argparse.Namespace) -> list[Path]:
+    """Resolve project roots from --root flags or fallback to defaults."""
+    return ([Path(r).expanduser().resolve() for r in args.root]
+            or _default_roots(args.home))
+
+
+def build_reports(args: argparse.Namespace, *, git_recent_commits: int = 50):
+    """Build full ProjectReports for every command that scans the fleet.
+
+    `git_recent_commits` controls how many commits the GitScanner pulls per
+    project. Window-based commands (recap, audit, catchup) raise this when
+    they need history that reaches further back than the default.
+    """
     cfg = _default_config(args.home)
-    roots = ([Path(r).expanduser().resolve() for r in args.root]
-             or _default_roots(args.home))
+    roots = resolve_roots(args)
     if not roots:
         print(
             "No project roots configured. Pass --root <path>, set "
@@ -89,7 +104,7 @@ def _run_report(args: argparse.Namespace) -> int:
             + ", ".join(f"~/{n}" for n in _DEFAULT_ROOT_NAMES),
             file=sys.stderr,
         )
-        return 1
+        return None
 
     projects = discovery.discover_projects_in_roots(roots)
     projects = discovery.filter_projects(projects, only=args.project or None,
@@ -97,9 +112,9 @@ def _run_report(args: argparse.Namespace) -> int:
     if not projects:
         roots_str = ", ".join(str(r) for r in roots)
         print(f"No projects found under {roots_str}", file=sys.stderr)
-        return 1
+        return None
 
-    git = None if "git" in args.disable else GitScanner()
+    git = None if "git" in args.disable else GitScanner(recent_commits=git_recent_commits)
     scanners: list[object] = []
     if "claude" not in args.disable:
         scanners.append(ClaudeScanner(cfg["claude_projects"]))
@@ -114,8 +129,14 @@ def _run_report(args: argparse.Namespace) -> int:
     if "docs" not in args.disable:
         scanners.append(DocsScanner())
 
-    reports = aggregator.build_all(projects, scanners, git=git,
-                                   max_workers=args.max_workers)
+    return aggregator.build_all(projects, scanners, git=git,
+                                max_workers=args.max_workers)
+
+
+def _run_report(args: argparse.Namespace) -> int:
+    reports = build_reports(args)
+    if reports is None:
+        return 1
 
     if args.since is not None:
         cutoff = datetime.now(tz=timezone.utc) - timedelta(days=args.since)
@@ -156,7 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="project-commander",
         description="Survey project folders and apply hygiene actions across them.",
     )
-    sub = parser.add_subparsers(dest="cmd", required=True, metavar="{report,tidy}")
+    sub = parser.add_subparsers(dest="cmd", required=True,
+                                metavar="{report,tidy,catchup,verify,audit,recap}")
 
     rp = sub.add_parser(
         "report",
@@ -166,8 +188,12 @@ def main(argv: list[str] | None = None) -> int:
     _add_report_args(rp)
     rp.set_defaults(func=_run_report)
 
-    from . import tidy
+    from . import tidy, catchup, verify, audit, recap
     tidy.add_subparser(sub)
+    catchup.add_subparser(sub)
+    verify.add_subparser(sub)
+    audit.add_subparser(sub)
+    recap.add_subparser(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)

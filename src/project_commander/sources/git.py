@@ -17,7 +17,9 @@ from ..models import Signal
 class GitScanner:
     name = "git"
 
-    def __init__(self, *, recent_commits: int = 10) -> None:
+    def __init__(self, *, recent_commits: int = 50) -> None:
+        # 50 is enough for one-month windows on busy projects without bloating
+        # signal storage. Window-based analyses (catchup, audit, recap) lean on this.
         self.recent_commits = recent_commits
 
     def _run(self, project: Path, *args: str) -> str | None:

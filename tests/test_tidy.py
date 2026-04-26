@@ -205,3 +205,119 @@ def test_push_skipped_when_uptodate(tmp_path):
 def test_git_present(git_arg):
 	# sanity: the tests above need git; fail loudly if it's not installed
 	subprocess.run(["git", *git_arg], check=True, capture_output=True)
+
+
+
+# ---------- prune ----------
+
+def test_prune_archives_dormant_clean_project(tmp_path):
+	p = tmp_path / "old-experiment"
+	p.mkdir()
+	report = _report(path=p, is_git=True, dirty=False, last_active_days=120)
+	cfg = TidyConfig(prune=True, prune_age_days=90,
+	                 init=False, commit_stale=False)
+	now = datetime.now(tz=timezone.utc)
+	actions = plan(report, config=cfg, now=now)
+	archive = [a for a in actions if a.action == Action.ARCHIVE]
+	assert len(archive) == 1
+	assert "dormant 120d" in archive[0].reason
+	# Default destination is <project.parent>/archive/<name>
+	assert archive[0].detail.endswith("/archive/old-experiment")
+
+
+def test_prune_holds_when_working_tree_dirty(tmp_path):
+	p = tmp_path / "messy"
+	p.mkdir()
+	report = _report(path=p, is_git=True, dirty=True, last_active_days=200)
+	cfg = TidyConfig(prune=True, init=False, commit_stale=False)
+	now = datetime.now(tz=timezone.utc)
+	actions = plan(report, config=cfg, now=now)
+	assert [a.action for a in actions] == [Action.HOLD]
+	assert "dirty" in actions[0].reason
+
+
+def test_prune_holds_when_branch_ahead(tmp_path):
+	p = tmp_path / "unpushed"
+	p.mkdir()
+	sig = Signal(source="git", kind="commit",
+	             timestamp=_ts(200), summary="x", ref="abc")
+	report = ProjectReport(
+		path=p, name="unpushed", is_git_repo=True, git_branch="main",
+		git_ahead=2, signals=[sig],
+	)
+	cfg = TidyConfig(prune=True, init=False, commit_stale=False)
+	actions = plan(report, config=cfg, now=datetime.now(tz=timezone.utc))
+	assert [a.action for a in actions] == [Action.HOLD]
+	assert "unpushed" in actions[0].reason
+
+
+def test_prune_skips_already_archived(tmp_path):
+	root = tmp_path / "archive" / "old"
+	root.mkdir(parents=True)
+	report = _report(path=root, name="old", is_git=True, last_active_days=200)
+	cfg = TidyConfig(prune=True, init=False, commit_stale=False)
+	actions = plan(report, config=cfg, now=datetime.now(tz=timezone.utc))
+	# Path already contains 'archive' \u2014 do not double-archive
+	assert actions == []
+
+
+def test_prune_skips_when_under_age_threshold(tmp_path):
+	p = tmp_path / "recent"
+	p.mkdir()
+	report = _report(path=p, is_git=True, last_active_days=30)
+	cfg = TidyConfig(prune=True, prune_age_days=90, init=False, commit_stale=False)
+	actions = plan(report, config=cfg, now=datetime.now(tz=timezone.utc))
+	assert actions == []
+
+
+def test_prune_uses_explicit_archive_dir(tmp_path):
+	p = tmp_path / "cold"
+	p.mkdir()
+	custom = tmp_path / "vault"
+	report = _report(path=p, is_git=True, last_active_days=200)
+	cfg = TidyConfig(prune=True, prune_age_days=90,
+	                 archive_dir=custom, init=False, commit_stale=False)
+	actions = plan(report, config=cfg, now=datetime.now(tz=timezone.utc))
+	assert actions[0].detail == str(custom / "cold")
+
+
+def test_prune_dry_run_does_not_move(tmp_path):
+	from project_commander.tidy import execute_archive
+	p = tmp_path / "toarchive"
+	p.mkdir()
+	(p / "data.txt").write_text("hello")
+	dest = tmp_path / "archive" / "toarchive"
+	planned = PlannedAction(project=p, name="toarchive", action=Action.ARCHIVE,
+	                        reason="test", detail=str(dest))
+	result = execute_archive(planned, dry_run=True)
+	assert result.ok
+	assert p.exists()  # not moved
+	assert not dest.exists()
+
+
+def test_prune_executor_moves_project(tmp_path):
+	from project_commander.tidy import execute_archive
+	p = tmp_path / "toarchive"
+	p.mkdir()
+	(p / "data.txt").write_text("hello")
+	dest = tmp_path / "archive" / "toarchive"
+	planned = PlannedAction(project=p, name="toarchive", action=Action.ARCHIVE,
+	                        reason="test", detail=str(dest))
+	result = execute_archive(planned, dry_run=False)
+	assert result.ok
+	assert not p.exists()
+	assert (dest / "data.txt").read_text() == "hello"
+
+
+def test_prune_executor_refuses_existing_destination(tmp_path):
+	from project_commander.tidy import execute_archive
+	p = tmp_path / "toarchive"
+	p.mkdir()
+	dest = tmp_path / "archive" / "toarchive"
+	dest.mkdir(parents=True)  # destination already exists
+	planned = PlannedAction(project=p, name="toarchive", action=Action.ARCHIVE,
+	                        reason="test", detail=str(dest))
+	result = execute_archive(planned, dry_run=False)
+	assert not result.ok
+	assert "already exists" in result.error
+	assert p.exists()  # original not moved

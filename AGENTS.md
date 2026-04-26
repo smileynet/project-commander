@@ -20,10 +20,13 @@ src/project_commander/
 ├── aggregator.py     build_report, build_all (threadpool fanout)
 ├── observations.py   Progress enum, ActivityWindow, Outstanding,
 │                     clean_doc_prose, first_sentence, build()
-├── tidy.py           hygiene subcommand: init / commit-stale / fetch / push
-├── report.py         render_table (grouped fleet) / render_review (period digest) /
-│                     render_review_markdown / render_detail /
-│                     render_detail_markdown / render_json / render_markdown
+├── tidy.py           hygiene: init / commit-stale / fetch / push / archive (prune)
+├── catchup.py        delta digest since persisted cursor (J3 — catch up)
+├── verify.py         per-project closure checks with structured exit code (J5 — verify)
+├── audit.py          prompt → commit causality + ratios (J7 — audit agent behavior)
+├── recap.py          per-period retrospective narrative (J6 — reconstruct)
+├── report.py         render_table (J2 fleet) / render_review (J2 weekly) /
+│                     render_detail (J1 briefing card) / render_json / render_markdown
 └── sources/
     ├── base.py       SourceScanner protocol (just `scan(project) -> list[Signal]`)
     ├── git.py        subprocess git log
@@ -36,7 +39,11 @@ src/project_commander/
 
 tests/
 ├── test_scanners.py     synthetic-fixture tests for each scanner + aggregator
-├── test_tidy.py         pure-planner + push-refusal tests for the tidy module
+├── test_tidy.py         tidy planner + push-refusal + prune planner/executor tests
+├── test_catchup.py      cursor persistence + since-parsing + classification
+├── test_verify.py       per-check PASS/FAIL/SKIP + verdict aggregation + JSON shape
+├── test_audit.py        prompt → commit window matching + ratios + flags
+├── test_recap.py        category routing + narrative synthesis
 ├── test_roots.py        multi-root discovery + dedup + env-var precedence
 └── test_observations.py chrome stripping, sentence truncation, plan-doc parsing,
                         Outstanding builder, next-action synthesis

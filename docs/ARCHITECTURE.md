@@ -229,20 +229,20 @@ The fleet-table `Intent` cell composes two layers:
 
 Identity authority is intentionally different from planning authority: README/ROADMAP-style docs win when present so the stable project identity does not get hijacked by the latest plan doc. Planning docs feed the detail report's `What's planned next` section.
 
-"Substantive" means *not* a one-word approval. Procedural prompts (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`) are filtered out and surfaced separately as a flag \u2014 see below.
+"Substantive" means *not* a one-word approval. Procedural prompts (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, `do it`, `retry`) are filtered out and surfaced separately as a flag — see below.
 
 ## The four-question briefing card
 
 The detail view answers four reader questions, in order, with synthesized prose rather than evidence dumps. The headings *are* the questions, so the reader can skim:
 
-1. **What is it?** \u2014 the project's stable identity, sourced from `README` / `ROADMAP` / `AGENTS` (planning docs are intentionally demoted here so the identity line does not flip every plan revision).
-2. **What's been happening?** \u2014 a one-sentence synthesis of the last week of activity. Recent commits get topic-fragmented and joined; falls back to last concrete action or latest prompt when no commits landed.
-3. **Where it stands** \u2014 the unresolved condition that explains the current situation: dirty tree, ahead/behind upstream, orphaned thread, plan-drift, or a clean checkpoint. One synthesized paragraph, not a bulleted evidence list.
-4. **What's planned next** \u2014 the forward-looking direction, sourced from a plan doc when one exists. When workstream synthesis would only repeat \"What's been happening?\", the section degrades gracefully to a `_No plan doc found_` line.
+1. **What is it?** — the project's stable identity, sourced from `README` / `ROADMAP` / `AGENTS` (planning docs are intentionally demoted here so the identity line does not flip every plan revision).
+2. **What's been happening?** — a one-sentence synthesis of the last week of activity. Recent commits get topic-fragmented and joined; falls back to last concrete action or latest prompt when no commits landed.
+3. **Where it stands** — the unresolved condition that explains the current situation: dirty tree, ahead/behind upstream, orphaned thread, plan-drift, or a clean checkpoint. One synthesized paragraph, not a bulleted evidence list.
+4. **What's planned next** — the forward-looking direction, sourced from a plan doc when one exists. When workstream synthesis would only repeat \"What's been happening?\", the section degrades gracefully to a `_No plan doc found_` line.
 
-Below those four sections, a `**Your first action:**` callout names the single safest next move (commit, push, pull, init, reconcile). The card closes with a one-line `<sub>Inspect: \u2026</sub>` footer that lists the plan doc, last commit, last prompt, identity doc, and working-tree state \u2014 a pointer trail rather than another evidence section.
+Below those four sections, a `**Your first action:**` callout names the single safest next move (commit, push, pull, init, reconcile). The card closes with a one-line `<sub>Inspect: …</sub>` footer that lists the plan doc, last commit, last prompt, identity doc, and working-tree state — a pointer trail rather than another evidence section.
 
-This is the JTBD boundary: the reader sitting down to a half-remembered project gets enough synthesis on screen to decide whether to resume, archive, or change direction \u2014 without re-reading recent commits or scanning prompt history.
+This is the JTBD boundary: the reader sitting down to a half-remembered project gets enough synthesis on screen to decide whether to resume, archive, or change direction — without re-reading recent commits or scanning prompt history.
 
 ## Progress: where the project is in its lifecycle
 
@@ -319,54 +319,54 @@ an agent here, not directing it."* Useful as a usage-shape signal.
 The card carries one footer line of source pointers, not a section of evidence:
 
 ```
-  <sub>Inspect: plan `.sisyphus/plans/optimal-plan-forward.md` \u00b7
-        last commit `2026-04-23` \u00b7
-        last prompt `2026-04-24` (`opencode`) \u00b7
-        identity `README.md` \u00b7
+  <sub>Inspect: plan `.sisyphus/plans/optimal-plan-forward.md` ·
+        last commit `2026-04-23` ·
+        last prompt `2026-04-24` (`opencode`) ·
+        identity `README.md` ·
         working tree (13 files)</sub>
 ```
 
-If the reader wants the underlying material, the footer points them straight at it. The detail card itself never enumerates raw commits or prompts \u2014 the user can open the listed file or run `git log` directly.
+If the reader wants the underlying material, the footer points them straight at it. The detail card itself never enumerates raw commits or prompts — the user can open the listed file or run `git log` directly.
 
 ## Period in review (`--since N`)
 
-When `--since` is set with `N \u2264 30`, the report switches from a fleet table to a scan-first triage digest. The aim is brutal compression: a reader with dozens of projects sees, in seconds, *what needs me, what's new, what moved.*
+When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first triage digest. The aim is brutal compression: a reader with dozens of projects sees, in seconds, *what needs me, what's new, what moved.*
 
 ```
   Last 7 day(s)
-  _Since 2026-04-19 \u00b7 28 active project(s) \u00b7 197 commit(s) \u00b7 123 substantive prompt(s)_
+  _Since 2026-04-19 · 28 active project(s) · 197 commit(s) · 123 substantive prompt(s)_
 
   ## Needs your attention (20)
   _These have a clear next move. Pick one and finish it._
 
-  - **code-knowledge** \u2014 Reconcile AGENTS.md: it says complete but 10 commit(s) have landed since\u2026 _2d ago \u00b7 dirty, ahead, drift._
-  - **dotfiles** \u2014 Pull 7 commit(s) from origin/main. _2h ago \u00b7 behind._
-  \u2026
+  - **code-knowledge** — Reconcile AGENTS.md: it says complete but 10 commit(s) have landed since… _2d ago · dirty, ahead, drift._
+  - **dotfiles** — Pull 7 commit(s) from origin/main. _2h ago · behind._
+  …
 
   ## New this week (8)
   _Repos that landed in your worktrees for the first time._
 
-  - **kimi-cavekit** _(Wed)_ \u2014 Cavekit into core + 11 phase skills.
-  \u2026
+  - **kimi-cavekit** _(Wed)_ — Cavekit into core + 11 phase skills.
+  …
 
   ## Moved this week (n)
-  _Quiet activity \u2014 commits, prompts, or upstream sync._
+  _Quiet activity — commits, prompts, or upstream sync._
 ```
 
 Three exclusive sections answer the user's three weekly questions:
 
-- **Needs your attention** \u2014 has an actionable open state (dirty / ahead / behind / orphan / drift / no-git). The lead clause is the next-action verb (commit, push, pull, init, reconcile), not a count.
-- **New this week** \u2014 first commit landed in the window.
-- **Moved this week** \u2014 had activity but is in a settled state.
+- **Needs your attention** — has an actionable open state (dirty / ahead / behind / orphan / drift / no-git). The lead clause is the next-action verb (commit, push, pull, init, reconcile), not a count.
+- **New this week** — first commit landed in the window.
+- **Moved this week** — had activity but is in a settled state.
 
-Each row is one line. The previous \"`Start with:` / `Look at:`\" two-line evidence dump per row was retired \u2014 the inspect footer of the per-project detail report covers the same information for whichever project the reader chooses to resume.
+Each row is one line. The previous \"`Start with:` / `Look at:`\" two-line evidence dump per row was retired — the inspect footer of the per-project detail report covers the same information for whichever project the reader chooses to resume.
 
-Section caps at 8 rows with `\u2026 +N more` overflow.
+Section caps at 8 rows with `… +N more` overflow.
 
 ## Tidy: hygiene actions
 
 `project-commander tidy` is the second top-level subcommand. Where
-`report` only reads, `tidy` writes — it applies four narrowly-scoped
+`report` only reads, `tidy` writes — it applies five narrowly-scoped
 git-hygiene actions that catch the things that slip through the
 cracks of an active project folder:
 
@@ -383,12 +383,22 @@ cracks of an active project folder:
   push           (--push only)  push branches whose unpushed range
                  contains zero hygiene commits
                  →  git push <upstream-tracking-ref>
+
+  archive        (--prune only)  move dormant clean projects to an archive folder
+                 →  shutil.move(<project> → <archive_dir>/<name>)
+  hold           (--prune only)  refused archive (dirty / unpushed) — surfaces a manual decision
 ```
 
-`init` and `commit-stale` are on by default; `--sync` and `--push`
-are explicit opt-ins because they touch the network and remote
-state. `--no-init` / `--no-commit` turn the defaults off; `--dry-run`
-shows the plan without executing.
+`init` and `commit-stale` are on by default; `--sync`, `--push`, and
+`--prune` are explicit opt-ins because they touch the network or
+filesystem in ways the user should approve. `--no-init` / `--no-commit`
+turn the defaults off; `--dry-run` shows the plan without executing.
+
+`--prune` walks the fleet for projects last touched at least
+`--prune-age` days ago (default 90). Clean dormant projects get an
+ARCHIVE planned move; dirty or ahead-of-upstream projects get HOLD instead
+so the user resolves them first. Default destination is
+`<project.parent>/archive/<name>/`, override with `--archive-dir`.
 
 Every commit `tidy` makes carries a trailer:
 
@@ -399,17 +409,81 @@ Every commit `tidy` makes carries a trailer:
 This trailer is the boundary between work and housekeeping. The
 `push` action refuses any branch whose `upstream..HEAD` range
 contains a hygiene commit, so a `commit-stale` checkpoint never
-lands on a remote without you noticing. The trailer is also how
-`tidy` will, in the future, distinguish its own commits from yours
-for any further sweep logic.
+lands on a remote without you noticing.
 
 Plan and execute are split for testability. `tidy.plan(report,
 config, now)` is a pure function returning `list[PlannedAction]`;
 `tidy.execute_init / execute_commit_stale / execute_fetch /
-execute_push` perform the side effects. Tests exercise the planner
+execute_push / execute_archive / execute_hold` perform the side effects. Tests exercise the planner
 with synthetic reports and exercise the push refusal against a real
 local bare repo + clone, no network involved.
 
+## Catchup: deltas since you last looked
+
+`project-commander catchup` answers a different question from `report --since`:
+the weekly digest is anchored to the calendar; catchup is anchored to *you*.
+It persists a cursor at `$XDG_STATE_HOME/project-commander/catchup-cursor.txt`
+(or `~/.local/state/project-commander/catchup-cursor.txt`) holding the timestamp
+of the last invocation. Each run shows deltas since the cursor and then
+advances it.
+
+Three sections, each answering a different question:
+
+- **Agent activity while you were away** — projects with prompts since the cursor
+- **Upstream moved without you** — projects with new commits whose branch is behind
+- **Your own work since last check** — projects where you authored progress
+
+A project can appear in multiple sections; they are different angles, not
+exclusive buckets. `--since 6h` overrides the cursor for one preview run
+without advancing it. `--reset-cursor` clears the cursor so the next run
+starts fresh. `--no-advance` previews without writing.
+
+## Verify: structured PASS/FAIL closure checks
+
+`project-commander verify [--project NAME]` runs five named checks and exits
+non-zero on any FAIL:
+
+```
+  working_tree_clean    no uncommitted changes
+  branch_in_sync        no ahead/behind state vs upstream
+  no_orphan_thread      latest substantive prompt has a follow-up commit
+  no_plan_drift         plan-doc completion claim still matches the code
+  prompts_substantive   recent prompts include real direction, not just approvals
+```
+
+The terminal form is human-readable; `--format json` produces a structured
+object suitable for agents. Single-project invocations emit one object;
+fleet runs (no `--project`) emit an array. Scripts can chain `tidy && verify`
+to gate handoff actions on a clean state.
+
+## Audit: prompt → commit causality
+
+`project-commander audit --project NAME --since N` shows whether agent prompts
+actually converted into landed code. For each substantive prompt in the
+window, the module looks forward 24 hours for any commit; "executed" if found,
+"orphan" otherwise. The prompt-to-commit ratio gives a coarse handle on
+conversation volume vs real progress.
+
+Procedural prompts (yes/proceed/continue/...) are counted separately and never
+count toward causality — they are approval traffic, not direction.
+
+Audit raises the GitScanner's commit cap to 200 so that windows up to a
+month see real history rather than a truncated tail.
+
+## Recap: per-period retrospective narrative
+
+`project-commander recap [--quarter|--year|--month|--since N]` is the memory
+artifact the weekly digest deliberately is not. Each project that had
+activity in the window gets a paragraph synthesized from purpose + commit
+themes, grouped into:
+
+- **Shipped** — progress state is `shipped` and activity exists in the window
+- **Major arcs** — ≥ 10 commits in the window
+- **Started but paused** — first commit in the window, idle for the back end
+- **Quiet activity** — had activity but doesn't fit the above
+
+Recap raises the GitScanner cap to 500 so it can see real history for
+year-long windows.
 ## End-to-end runtime
 
 What happens, in order, when you run `project-commander report`:

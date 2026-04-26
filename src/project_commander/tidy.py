@@ -38,6 +38,8 @@ class Action(str, Enum):
 	COMMIT_STALE = "commit-stale"
 	FETCH = "fetch"
 	PUSH = "push"
+	ARCHIVE = "archive"
+	HOLD = "hold"  # planned but skipped \u2014 surfaced so user can act
 
 
 @dataclass
@@ -47,6 +49,9 @@ class TidyConfig:
 	stale_age_days: int = 7
 	sync: bool = False
 	push: bool = False
+	prune: bool = False
+	prune_age_days: int = 90
+	archive_dir: Path | None = None  # default: <project.parent>/archive/
 	dry_run: bool = False
 
 
@@ -115,6 +120,9 @@ def plan(report: ProjectReport, *, config: TidyConfig, now: datetime) -> list[Pl
 			reason="push requested (will skip branches with hygiene commits)",
 		))
 
+	if config.prune:
+		actions.extend(_plan_prune(report, config=config, now=now))
+
 	return actions
 
 
@@ -124,6 +132,42 @@ def _has_visible_content(p: Path) -> bool:
 		return any(not e.name.startswith(".") for e in p.iterdir())
 	except OSError:
 		return False
+
+
+def _archive_destination(project: Path, config: TidyConfig) -> Path:
+	"""Resolve the archive folder; default is `<project.parent>/archive/<name>/`."""
+	base = config.archive_dir or (project.parent / "archive")
+	return base / project.name
+
+
+def _plan_prune(report: ProjectReport, *, config: TidyConfig, now: datetime
+                ) -> list[PlannedAction]:
+	"""Plan ARCHIVE actions for dormant projects, with HOLD when unsafe."""
+	if report.last_active is None:
+		return []
+	days = (now - report.last_active).days
+	if days < config.prune_age_days:
+		return []
+	# Skip if archive folder name is in the path \u2014 already archived
+	if "archive" in report.path.parts:
+		return []
+	# Refuse to archive when there's unsaved/unpushed work; surface as HOLD instead.
+	if report.git_dirty:
+		return [PlannedAction(
+			project=report.path, name=report.name, action=Action.HOLD,
+			reason=f"dormant {days}d but working tree is dirty \u2014 commit or stash first",
+		)]
+	if report.git_ahead > 0:
+		return [PlannedAction(
+			project=report.path, name=report.name, action=Action.HOLD,
+			reason=f"dormant {days}d but {report.git_ahead} unpushed commit(s) \u2014 push first",
+		)]
+	dest = _archive_destination(report.path, config)
+	return [PlannedAction(
+		project=report.path, name=report.name, action=Action.ARCHIVE,
+		reason=f"dormant {days}d (>= {config.prune_age_days})",
+		detail=str(dest),
+	)]
 
 
 # ---------- execution ----------
@@ -258,11 +302,36 @@ def execute_push(p: PlannedAction, *, dry_run: bool) -> ExecutedAction:
 	return ExecutedAction(planned=p, ok=True, output=f"pushed {len(unpushed)} commit(s)")
 
 
+def execute_archive(p: PlannedAction, *, dry_run: bool) -> ExecutedAction:
+	import shutil
+	dest = Path(p.detail)
+	if dry_run:
+		return ExecutedAction(planned=p, ok=True,
+		                       output=f"(dry-run) would move \u2192 {dest}")
+	if dest.exists():
+		return ExecutedAction(planned=p, ok=False,
+		                       error=f"destination already exists: {dest}")
+	try:
+		dest.parent.mkdir(parents=True, exist_ok=True)
+		shutil.move(str(p.project), str(dest))
+	except OSError as e:
+		return ExecutedAction(planned=p, ok=False, error=str(e))
+	return ExecutedAction(planned=p, ok=True, output=f"archived \u2192 {dest}")
+
+
+def execute_hold(p: PlannedAction, *, dry_run: bool) -> ExecutedAction:
+	"""HOLD never executes \u2014 it surfaces a manual decision in the planner output."""
+	return ExecutedAction(planned=p, ok=True, output="HOLD: review and act manually")
+
+
+
 _EXECUTORS = {
 	Action.INIT: execute_init,
 	Action.COMMIT_STALE: execute_commit_stale,
 	Action.FETCH: execute_fetch,
 	Action.PUSH: execute_push,
+	Action.ARCHIVE: execute_archive,
+	Action.HOLD: execute_hold,
 }
 
 
@@ -357,6 +426,12 @@ def add_subparser(subparsers) -> argparse.ArgumentParser:
 						help="run `git fetch --all` per repo")
 	parser.add_argument("--push", action="store_true", default=False,
 						help="push branches when no hygiene commits are in the unpushed range")
+	parser.add_argument("--prune", action="store_true", default=False,
+						help="plan ARCHIVE moves for projects dormant >= --prune-age days")
+	parser.add_argument("--prune-age", type=int, default=90,
+						help="minimum idle days before a project is considered dormant (default: 90)")
+	parser.add_argument("--archive-dir", type=Path, default=None,
+						help="override archive destination (default: <project.parent>/archive/)")
 	parser.add_argument("--dry-run", action="store_true", default=False,
 						help="show planned actions without executing")
 	parser.add_argument("--no-color", action="store_true", default=False)
@@ -380,6 +455,9 @@ def run(args: argparse.Namespace) -> int:
 		stale_age_days=args.stale_age,
 		sync=args.sync,
 		push=args.push,
+		prune=args.prune,
+		prune_age_days=args.prune_age,
+		archive_dir=Path(args.archive_dir).expanduser().resolve() if args.archive_dir else None,
 		dry_run=args.dry_run,
 	)
 	console = Console(no_color=args.no_color, soft_wrap=False)
@@ -408,6 +486,8 @@ def run(args: argparse.Namespace) -> int:
 		bullets.append("sync")
 	if config.push:
 		bullets.append("push")
+	if config.prune:
+		bullets.append(f"prune (>= {config.prune_age_days}d)")
 	console.print(f"[dim]Active: {', '.join(bullets) or '(nothing enabled)'}[/dim]")
 	console.print()
 
