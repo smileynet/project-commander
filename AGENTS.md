@@ -32,7 +32,8 @@ src/project_commander/
     └── docs.py       in-tree PLAN/README/ROADMAP/NEXT_STEPS/AGENTS/...
 
 tests/
-└── test_scanners.py  synthetic-fixture tests; no network, no real ~/code
+├── test_scanners.py  synthetic-fixture tests for each scanner + aggregator + observations
+└── test_tidy.py      pure-planner + push-refusal tests for the tidy module
 ```
 
 ## Three-layer transformation
@@ -453,7 +454,9 @@ pytest -q
 The suite is synthetic-fixture driven: tests build a fake `home` and
 `code_root` per test using `tmp_path` and never touch real `~/code`
 or run network. `tests/test_scanners.py` covers each source plus the
-aggregator and observations layer.
+aggregator and observations layer; `tests/test_tidy.py` covers the
+pure planner and the push-refusal logic (using a sandboxed local
+bare repo — still no network).
 
 When adding a scanner, add a fixture-based test that:
 

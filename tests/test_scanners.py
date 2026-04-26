@@ -64,7 +64,8 @@ def test_filter_glob(tmp_path: Path):
 
 def test_claude_extracts_user_prompts(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "myproj")
 
     proj_key = "-" + str(proj).replace("/", "-").lstrip("-")
@@ -92,7 +93,8 @@ def test_claude_extracts_user_prompts(tmp_path: Path):
 
 def test_gemini_logs_extracts_user_messages(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "ginger")
     gdir = home / ".gemini" / "tmp" / "ginger"
     (gdir / "chats").mkdir(parents=True)
@@ -112,7 +114,8 @@ def test_gemini_logs_extracts_user_messages(tmp_path: Path):
 
 def test_omp_session_and_prompts(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "omega")
     sessions = home / ".omp" / "agent" / "sessions"
     pdir = sessions / "-code-omega"
@@ -137,7 +140,8 @@ def test_omp_session_and_prompts(tmp_path: Path):
 
 def test_opencode_index_and_transcript(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "oc-proj")
 
     storage = home / ".local" / "share" / "opencode" / "storage"
@@ -168,7 +172,8 @@ def test_opencode_index_and_transcript(tmp_path: Path):
 
 def test_kiro_emits_session_at_file_mtime(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "kiroproj")
 
     history = home / ".aws" / "amazonq" / "history"
@@ -186,7 +191,8 @@ def test_kiro_emits_session_at_file_mtime(tmp_path: Path):
 
 def test_docs_picks_up_intent_paragraph(tmp_path: Path):
     home = tmp_path / "home"
-    code = home / "code"; code.mkdir(parents=True)
+    code = home / "code"
+    code.mkdir(parents=True)
     proj = _make_project(code, "doc-proj")
     (proj / "README.md").write_text(
         "<!-- skip me -->\n\n# title\n\nThis project surveys ~/code projects across agent tools.\n"
@@ -310,7 +316,8 @@ def test_observations_prompt_injection_flag():
 
 
 def test_aggregator_runs_with_no_git(tmp_path: Path):
-    code = tmp_path / "code"; code.mkdir()
+    code = tmp_path / "code"
+    code.mkdir()
     proj = _make_project(code, "alpha")
     (proj / "README.md").write_text("# alpha\n\nA test project for aggregation.\n")
     reports = aggregator.build_all([proj], [DocsScanner()], git=None)
