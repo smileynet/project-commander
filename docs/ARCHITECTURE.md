@@ -1,235 +1,238 @@
 # Architecture
 
-`project-commander` is a single-process Python CLI that fans out a small
-fixed set of read-only scanners across every project under `~/code`,
-fuses their output into one record per project, runs heuristics over the
-fused record, and renders the result.
+`project-commander` answers one question: **what is the state of every
+project in `~/code` right now?**
 
-The whole tool is ~1.8K LOC. It has no daemon, no database, no cache
-file, and one runtime dependency (`rich`). Every report run reads the
-filesystem from scratch.
+It does that by reading every place a project leaves a trail — git
+history, agent conversation logs across seven coding tools, and plan
+docs in the repo itself — and folding all of it into one record per
+project, then rendering that record in whichever shape you asked for.
 
-## The three data shapes
+This document describes what the tool gives you and how it produces
+each piece. For module-level internals, read the source.
+
+## What you get
+
+Three views, same underlying data, different shapes.
+
+### Fleet table (default)
 
 ```
-Signal         per-observation, one source              models.Signal
-   │           kind ∈ {commit, prompt, doc, session, filesystem}
-   │           timezone-aware UTC enforced in __post_init__
-   ▼
-ProjectReport  per-project, all signals folded in       models.ProjectReport
-   │           branch, dirty flag, signals[], last_active
-   ▼
-Observations   per-project, interpreted                 observations.Observations
-               progress enum, intent text, flags, evidence,
-               7d/30d/90d activity windows
+$ project-commander
 ```
 
-Three layers, three responsibilities:
+One row per project. Six columns:
 
-| Layer | Reads | Produces | Has business logic? |
-|---|---|---|---|
-| **Sources** (`sources/*.py`) | Disk (git, JSON, markdown, etc.) | `list[Signal]` | No — only parsing |
-| **Aggregator** (`aggregator.py`) | Source output | `ProjectReport` + `Observations` | Just orchestration |
-| **Observations** (`observations.py`) | `ProjectReport` | `Observations` | Yes — all heuristics live here |
-| **Renderer** (`report.py`) | `ProjectReport.observations` | Stdout | No — interprets nothing |
+| Column | What it tells you |
+|---|---|
+| **Project** | Folder name under `~/code`. |
+| **Last active** | Time since the most recent observed event from any source ("0m ago", "13h ago", "4w ago"). |
+| **Progress** | One of eleven lifecycle states (see below). The headline answer to *"is this thing alive?"*. |
+| **Sources** | One letter per tool that has touched this project: `G`it, `C`laude, ge`M`ini, `O`MP, opencode (`P`), `K`iro, `D`ocs. `CDMGOP` means six tools have history here. |
+| **Git** | Branch + dirty marker (`*`). Dash if not a git repo. |
+| **Intent** | One sentence: what the project is *for* + what it's *currently doing*. |
 
-Heuristics live in exactly one place. The renderer reads observations
-and prints them; it never decides what state a project is in.
+Sorted by recency. Ideal for *"which projects have I touched recently
+and what was I doing?"* at a glance.
 
-## Runtime task graph
+### Project detail (`--project <name>`)
+
+```
+$ project-commander --project cdda_improved
+```
+
+Full audit trail for one project: progress summary with concrete
+numbers, the highest-priority plan doc's purpose, the most recent
+substantive prompt as focus, last action, flags, evidence, 7d/30d
+activity counts, then the actual recent commits, prompts, sessions,
+and plan-doc edits.
+
+Use this when the table tells you something interesting and you want
+the receipts.
+
+### Machine-readable (`--format json`, `--format markdown`)
+
+Same data, structured for scripting or for sharing as a static
+report. JSON includes both the interpreted `observations` block and
+the raw `signals` array, so downstream tools can reinterpret if
+desired.
+
+## The seven signals it fuses
+
+Each source contributes a different layer of evidence:
+
+| Source | Where it reads | What it contributes |
+|---|---|---|
+| **git** | The repo itself | Branch, dirty flag, last 10 commits with subjects + timestamps. The objective record of what was committed. |
+| **Claude Code** | `~/.claude/projects/<encoded-cwd>/*.jsonl` | User prompts you typed at Claude in this directory. The *intent* signal — what you asked for, in your own words. |
+| **Gemini CLI** | `~/.gemini/tmp/<basename>/{logs.json,chats/}` | Prompts and chats from Gemini sessions. |
+| **Oh-My-Pi** | `~/.omp/agent/sessions/-code-<name>/*.jsonl` | OMP harness session prompts. |
+| **OpenCode** | `~/.local/share/opencode/storage/` joined with `~/.claude/transcripts/` | OpenCode session history; identifies which session belongs to which working directory and pulls the prompts back. |
+| **Kiro / Amazon Q** | `~/.aws/amazonq/history/chat-history-<md5(abspath)>.json` | Kiro chat-history file mtime as activity signal. |
+| **Docs** | `PLAN.md`, `README.md`, `ROADMAP.md`, `NEXT_STEPS.md`, `IMPROVEMENTS.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `TODO.md` in the project | The *purpose* signal — what the project is for, and (via mtime + done-phrase detection) whether the plan is current. |
+
+Together they answer questions no single tool can: *"this folder has
+no git history but I clearly worked on it yesterday"* (laffer-lore,
+OMP-only) or *"the README says shipped but I committed five times
+since then"* (best_practices, drift detected via doc mtime + git
+log).
+
+## Intent: purpose + focus
+
+The `Intent` cell on the table is composed from two layers:
+
+- **Purpose** — what the project is *for*. Pulled from the
+  highest-authority plan doc the project carries, in this order:
+
+  ```
+  PLAN.md > README.md > ROADMAP.md > NEXT_STEPS.md >
+  IMPROVEMENTS.md > AGENTS.md > CLAUDE.md / GEMINI.md > TODO.md
+  ```
+
+  The first prose paragraph of that file becomes the purpose.
+
+- **Focus** — what the project is *currently doing*. Distilled from
+  the most recent substantive user prompt within 30 days, across
+  every coding tool. "Substantive" excludes procedural one-liners
+  (`yes`, `proceed`, `ok`, `next`, `continue`, `go`, …) — those are
+  surfaced separately as a flag, not as focus.
+
+Combined: `"<purpose> Currently: <focus>"`. Either side can be
+missing; the renderer falls back gracefully.
+
+## Progress: where the project is in its lifecycle
+
+Eleven states, one per project, computed from activity windows + plan
+state + dirty tree:
+
+| State | Means |
+|---|---|
+| **Hot** | Touched today, with both prompts and commits in the last 7d. Active development. |
+| **Active** | Touched within 7 days. |
+| **Paused** | 7–30 days quiet, but mid-flight (uncommitted work or unresolved recent prompts). |
+| **Cooling** | 7–30 days quiet, clean tree, low cadence. Slowing down naturally. |
+| **Idle** | 30–90 days quiet. |
+| **Dormant** | 90+ days quiet. |
+| **Shipped** | Recent commits, plan declares complete, no fresh prompts. Properly landed. |
+| **Drifting** | ⚠ Plan declares complete *but* commits keep landing. Either the plan is stale or you forgot you said you were done. |
+| **Tracking** | Only upstream-style activity (sync commits, no prompts). Mirror or fork. |
+| **Stub** | Documentation only — no commits, no prompts. |
+| **Empty** | No signals observed for this folder. |
+
+Each state ships with a one-line summary that names concrete numbers,
+e.g. *"Touched today across 5 day(s); 10 commit(s), 12 prompt(s) this
+week."*
+
+The states are sized so the histogram is informative: an active dev
+can expect a healthy spread across Hot/Active/Paused/Idle, with
+Drifting and Empty as outliers worth investigating.
+
+## Flags: things worth your attention
+
+Flags surface conditions you'd otherwise have to spot manually:
+
+| Flag | Triggers when | Why you care |
+|---|---|---|
+| `dirty-tree` | Working tree has uncommitted changes. | Work in flight you haven't captured. |
+| `plan-drift` | Plan doc says "completed" + commits exist after the doc's mtime. | The plan is lying. |
+| `tool-cluster` | ≥4 different tools have touched the project. | This is a "main" project — multiple agents converge here. |
+| `upstream-only` | Commits exist on a non-main branch with no prompts at all. | Tracking-style fork. |
+| `no-docs` | Project has no plan doc in any of the recognized names. | No durable record of intent. |
+| `procedural-prompts` | Every recent prompt is `yes` / `proceed` / `ok` / etc. | You're approving an agent rather than directing one. Useful signal, not a defect. |
+| `prompt-injection-detected` | Recent prompts match system-prompt-extraction patterns. | Someone tried to probe an agent's instructions on this project. |
+
+## Evidence: every claim is auditable
+
+The detail view always ends with a one-line `Evidence:` trail like:
+
+```
+Evidence: doc:PLAN.md; recent prompt within 0d; last action: git:commit;
+          plan-drift: doc says complete, 5 commits since
+```
+
+Every interpreted line in the report can be traced back to the
+specific signals that justified it. If the headline says *Drifting*,
+the evidence says *which* doc, *which* phrase triggered it, and *how
+many* commits came after.
+
+## How a report is produced
+
+End to end, when you run `project-commander`:
 
 ```mermaid
 flowchart TD
-    CLI["cli.main(argv)"]
-    Disc["discovery.discover_projects(~/code)<br/>filter_projects(--project / --exclude)"]
-    Scanners["build scanner instances<br/>(stateful: load global indexes once)"]
-    Pool["aggregator.build_all<br/>ThreadPoolExecutor max_workers=8"]
+    Run["you run<br/>project-commander"] --> Disc["discover folders<br/>under ~/code"]
+    Disc --> Fan["for each project, in parallel:"]
 
-    CLI --> Disc
-    CLI --> Scanners
-    Disc --> Pool
-    Scanners --> Pool
-
-    Pool -->|"per project"| BR["aggregator.build_report"]
-
-    subgraph fanout["Per-project fanout (one task per project)"]
-        BR --> G["GitScanner<br/>branch, dirty, last 10 commits"]
-        BR --> C["ClaudeScanner<br/>~/.claude/projects/&lt;key&gt;"]
-        BR --> M["GeminiScanner<br/>~/.gemini/tmp/&lt;basename&gt;"]
-        BR --> O["OmpScanner<br/>~/.omp/agent/sessions/&lt;key&gt;"]
-        BR --> P["OpenCodeScanner<br/>storage + claude transcripts"]
-        BR --> K["KiroScanner<br/>chat-history-&lt;md5&gt;.json"]
-        BR --> D["DocsScanner<br/>PLAN/README/ROADMAP/..."]
-        G --> SIG["Signal[]"]
-        C --> SIG
-        M --> SIG
-        O --> SIG
-        P --> SIG
-        K --> SIG
-        D --> SIG
-        SIG --> PR["ProjectReport"]
-        PR --> OBS["observations.build(report)"]
-        OBS --> PR2["ProjectReport with .observations"]
+    subgraph project["Per project"]
+        Fan --> Read["read every signal source"]
+        Read -->|"git log"| GS["commits"]
+        Read -->|"~/.claude/projects"| CS["Claude prompts"]
+        Read -->|"~/.gemini/tmp"| MS["Gemini prompts"]
+        Read -->|"~/.omp/agent/sessions"| OS["OMP sessions"]
+        Read -->|"opencode storage<br/>+ claude transcripts"| PS["OpenCode prompts"]
+        Read -->|"~/.aws/amazonq/history"| KS["Kiro activity"]
+        Read -->|"PLAN/README/ROADMAP/..."| DS["plan docs"]
+        GS --> Fold["fold into one record"]
+        CS --> Fold
+        MS --> Fold
+        OS --> Fold
+        PS --> Fold
+        KS --> Fold
+        DS --> Fold
+        Fold --> Interp["interpret:<br/>intent, progress, flags, evidence"]
     end
 
-    PR2 --> Filter["--since / --limit filtering"]
-    Filter --> Render{"--format / --project"}
-    Render -->|"default"| RT["report.render_table"]
-    Render -->|"--project"| RD["report.render_detail (per project)"]
-    Render -->|"json"| RJ["report.render_json"]
-    Render -->|"markdown"| RM["report.render_markdown"]
+    Interp --> Filter["apply filters:<br/>--since / --limit / --project"]
+    Filter --> Out{"chosen output"}
+    Out -->|"default"| Tbl["fleet table"]
+    Out -->|"--project"| Det["per-project detail"]
+    Out -->|"--format json/markdown"| Mach["JSON / Markdown"]
 ```
 
-The `ThreadPoolExecutor` parallelizes **across projects**, not across
-scanners. Each project runs its 7 scanners sequentially inside one
-worker. This keeps the scanner protocol trivial (synchronous `scan`)
-and the fanout shape easy to reason about: ~90 projects × 7 scanners
-becomes 8 concurrent project-tasks.
+Three things to know about how the pipeline behaves:
 
-_SRC_FLAGS
+- **Reads from disk every run.** No cache, no daemon, no database. If
+  the report changes, something on disk changed. Reproducible by
+  construction.
+- **Heuristics, not LLMs.** All intent and progress detection is rule-
+  based — fast, deterministic, free, offline. Same input on the same
+  filesystem yields the same report.
+- **One bad source can't break a report.** Per-source and per-project
+  failures are caught and reported as a single failure row instead of
+  taking down the whole run. A malformed JSONL file from one tool
+  won't hide what the others observed.
 
-## Module layout
+## What you can ask for
 
 ```
-src/project_commander/
-├── cli.py            argparse, default config, scanner construction, dispatch
-├── discovery.py      walk ~/code, basename glob filter
-├── paths.py          per-tool cwd → session-key translations (pure functions)
-├── models.py         Signal (frozen, UTC-enforced), ProjectReport
-├── aggregator.py     build_report, build_all (threadpool fanout)
-├── observations.py   Progress enum, ActivityWindow, build(), heuristics
-├── report.py         render_table / render_detail / render_json / render_markdown
-└── sources/
-    ├── base.py       SourceScanner protocol (just `scan(project) -> list[Signal]`)
-    ├── git.py        subprocess git log
-    ├── claude.py     ~/.claude/projects/<key>/*.jsonl
-    ├── gemini.py     ~/.gemini/tmp/<basename>/{logs.json,chats/}
-    ├── omp.py        ~/.omp/agent/sessions/<key>/*.jsonl
-    ├── opencode.py   ~/.local/share/opencode + ~/.claude/transcripts join
-    ├── kiro.py       ~/.aws/amazonq/history/chat-history-<md5(abspath)>.json
-    └── docs.py       in-tree PLAN/README/ROADMAP/NEXT_STEPS/AGENTS/...
+project-commander                        all projects, sorted by recency
+project-commander --since 7              only projects active in the last week
+project-commander --limit 20             only the 20 most-recent
+project-commander --project cdda_*       detail view for matching folders
+project-commander --exclude pi-*         hide noisy folders
+project-commander --format json          structured output
+project-commander --format markdown      shareable report
+project-commander --disable kiro         skip a source you don't use
+project-commander --root /other/path     scan somewhere other than ~/code
 ```
 
-## Source scanner pattern
-
-Every scanner satisfies one tiny protocol (`sources/base.py`):
-
-```python
-class SourceScanner(Protocol):
-    name: str
-    def scan(self, project: Path) -> list[Signal]: ...
-```
-
-There are two flavors of scanner:
-
-1. **Stateless per-call.** `GitScanner`, `DocsScanner` — they only need
-   the project path; they ask the filesystem directly each time.
-
-2. **Stateful (global index, dispatch by project).** `OpenCodeScanner`
-   has to read `storage/directory-readme/ses_*.json` once to learn
-   which session belonged to which working directory, then return the
-   matching prompts from `~/.claude/transcripts/ses_*.jsonl`. State is
-   built in `__init__` (lazily on first scan) so the per-project call
-   stays cheap.
-
-### Per-tool path-key translations
-
-Each agent tool has its own scheme for turning a working directory
-into a session-storage directory name. Those translations live in
-`paths.py`:
-
-| Tool | Convention | Translation |
-|---|---|---|
-| Claude Code | `/` → `-` on absolute path | `paths.claude_key(p)` |
-| Oh-My-Pi | strip `$HOME`, then `/` → `-` | `paths.omp_key(p, home)` |
-| Gemini CLI | basename only (collisions possible) | `paths.gemini_key(p)` |
-| Kiro / Amazon Q | `md5(absolute path)` | `paths.kiro_hash(p)` |
-| OpenCode | indirect — session JSON records `cwd` | (no key fn; JSON lookup) |
-
-Isolating those rules in one module is the difference between *"oh
-right, that one's md5"* showing up once and showing up scattered
-through three scanners.
-
-## Observations heuristics
-
-`observations.build(report)` is pure: same `ProjectReport` in, same
-`Observations` out (modulo `now`, which is parameterizable for tests).
-It runs in this order:
-
-1. **Activity windows.** Count commits / prompts / sessions /
-   distinct-active-days at 7d, 30d, 90d.
-2. **Plan-drift detection.** Pick the highest-authority plan doc
-   (`_DOC_AUTHORITY`: PLAN > README > ROADMAP > NEXT_STEPS >
-   IMPROVEMENTS > AGENTS > CLAUDE/GEMINI > TODO). If its summary
-   matches `_DONE_PHRASES` *and* commits exist after the doc's mtime,
-   record the post-doc commit count.
-3. **Compose intent.** `purpose` from the best doc; `focus` from the
-   most recent non-procedural prompt within 30 days. Procedural
-   prompts (`yes`, `proceed`, `ok`, ...) are filtered through
-   `_PROCEDURAL_RE`; if all 30d prompts are procedural, the
-   `procedural-prompts` flag fires.
-4. **Classify progress.** Decision tree over the windows + drift +
-   dirty tree, returning one of the eleven `Progress` states. Each
-   state has a templated one-line summary that names concrete numbers
-   (`"Touched today across 5 day(s); 10 commit(s), 12 prompt(s) this
-   week."`).
-5. **Compute flags.** `dirty-tree`, `plan-drift`, `tool-cluster` (≥4
-   sources), `upstream-only` (commits with no prompts on a non-main
-   branch), `no-docs`, `procedural-prompts`,
-   `prompt-injection-detected` (prompts matching system-prompt-
-   extraction patterns).
-6. **Build evidence.** A short ordered list of the signals that
-   justify each claim (`doc:PLAN.md; recent prompt within 0d; last
-   action: git:commit; plan-drift: doc says complete, 5 commits
-   since`). Every line in the rendered detail view can be traced back
-   to a real signal here.
-
-## Renderer dispatch
-
-`cli.main` decides which renderer to call based on flags. There are
-four entry points in `report.py`:
-
-| Flag | Function | Output |
-|---|---|---|
-| (default) | `render_table(reports, console)` | `rich` table — Project / Last active / Progress / Sources / Git / Intent |
-| `--project <glob>` | `render_detail(report, console)` (per match) | Multi-line block per project: progress summary, purpose, focus, last action, flags, evidence, activity stats, recent commits + prompts + sessions + plan docs |
-| `--format json` | `render_json(reports)` | One JSON list. Each entry has the full `observations` block and the raw `signals` array |
-| `--format markdown` | `render_markdown(reports)` | Markdown table mirroring the default view |
-
-The detail view is the only renderer that walks the raw signal list;
-it sorts and slices `report.recent(...)` per `kind` to produce the
-"Recent commits / prompts / sessions / plan docs" sub-sections.
+`--project` and `--exclude` accept basename globs and repeat. `--disable`
+takes one source per flag and repeats. Everything else is a single
+value.
 
 ## Adding a new source
 
-1. Create `src/project_commander/sources/<name>.py`. Implement a class
-   with `name: str` and `scan(self, project: Path) -> list[Signal]`.
-2. If the tool encodes the project path as a session-dir name, add the
-   translation to `paths.py` and import it from the scanner — do not
-   inline the rule.
-3. Wire it into `cli.py`: add it to the `--disable` choices and append
-   an instance to `scanners` in `main`.
-4. _SRC_FLAGS
-5. Emit signals with `kind` chosen from the existing literal union
-   (`commit`, `prompt`, `doc`, `session`, `filesystem`). Adding a new
-   kind is a model change and forces every reader to think about how
-   to handle it — which is the point.
+If you adopt a new coding tool, you can teach `project-commander` to
+read it without touching anything else.
 
-The aggregator, observations layer, and renderer pick up the new
-source automatically — they iterate over `report.signals` and group
-by `(source, kind)`.
+1. Drop a file under `src/project_commander/sources/` that knows how
+   to read that tool's storage and emits one observation per event.
+2. Each observation declares its `kind` (commit / prompt / doc /
+   session / filesystem) so the renderer knows how to slot it.
+3. Wire the new source into the CLI's scanner list and pick a
+   single-letter flag for the table's `Sources` column.
 
-## What this design buys
-
-- **One place to interpret signals.** When a heuristic looks wrong, you
-  fix it in `observations.py`, not in three render paths.
-- **Audit trail by construction.** `Observations.evidence` is a list
-  of strings the heuristic functions appended as they ran. The detail
-  view prints it verbatim, so the report can always answer *"why did
-  you say that?"*.
-- **Cheap to add a tool.** A new source is one file plus a one-line
-  wiring change, because the ingestion contract (`Signal`) is
-  deliberately small.
-- **No persistent state.** Reproducible from disk. If the report
-  changes between runs, something on disk changed — there is no
-  cache to invalidate.
+The fleet table, detail view, and observations layer pick up the new
+source automatically — they group by source and kind without caring
+which tools are present.
