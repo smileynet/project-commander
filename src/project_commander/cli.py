@@ -33,6 +33,14 @@ def _default_config(home: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Subcommand dispatch (kept lightweight to avoid breaking the existing
+    # flag surface). Flag-only invocations fall through to the report CLI.
+    incoming = list(argv) if argv is not None else sys.argv[1:]
+    if incoming and incoming[0] == "tidy":
+        from . import tidy
+        return tidy.main(incoming[1:])
+    if incoming and incoming[0] == "report":  # explicit; identical to default
+        incoming = incoming[1:]
     parser = argparse.ArgumentParser(
         prog="project-commander",
         description="Survey ~/code projects by fusing git history, agent conversation logs, and plan docs.",
@@ -57,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable", action="append", default=[],
                         choices=["git", "claude", "gemini", "omp", "opencode", "kiro", "docs"],
                         help="skip a source (repeatable)")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(incoming)
 
     cfg = _default_config(args.home)
     code_root = (args.root or cfg["code_root"]).expanduser().resolve()

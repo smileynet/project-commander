@@ -65,6 +65,25 @@ publish:
 	{{pc}} --since 7 --format markdown > reports/last-7-days.md
 	@echo "wrote reports/"
 
+# ---------- tidy (hygiene actions) ----------
+
+# Show what `tidy` would do; never executes.
+tidy-plan:
+	{{pc}} tidy --dry-run
+
+# Apply hygiene actions (init missing repos, checkpoint stale dirty trees).  Does not sync or push.  Run `tidy-plan` first to preview.
+tidy:
+	{{pc}} tidy
+
+# Hygiene + git fetch --all per repo (still no push).
+tidy-sync:
+	{{pc}} tidy --sync
+
+# Hygiene + push (will refuse branches that have hygiene commits in their unpushed range).
+tidy-push:
+	{{pc}} tidy --push
+
+
 # ---------- triage ----------
 
 # Triage the fleet — runs the pc-triage skill script and prints an action list grouped by urgency.

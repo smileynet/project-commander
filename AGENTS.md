@@ -18,6 +18,7 @@ src/project_commander/
 ├── models.py         Signal (frozen, UTC-enforced), ProjectReport
 ├── aggregator.py     build_report, build_all (threadpool fanout)
 ├── observations.py   Progress enum, ActivityWindow, build(), heuristics
+├── tidy.py           hygiene subcommand: init / commit-stale / fetch / push
 ├── report.py         render_table / render_detail / render_detail_markdown /
 │                     render_json / render_markdown
 └── sources/
@@ -145,6 +146,80 @@ Concrete checklist:
 The aggregator, observations layer, and renderer pick up the new
 source automatically — they iterate over `report.signals` and group
 by `(source, kind)`.
+
+## Tidy module (`src/project_commander/tidy.py`)
+
+The `tidy` subcommand applies hygiene actions to the fleet:
+initialize folders that have content but no `.git/`, checkpoint
+dirty trees that have been idle too long, optionally fetch and push.
+It is wired into `cli.py` via a lightweight subcommand dispatch:
+
+```python
+if incoming and incoming[0] == "tidy":
+    from . import tidy
+    return tidy.main(incoming[1:])
+```
+
+Default invocation (`project-commander`) still routes to the report
+renderer; flag-only invocations are unchanged.
+
+### Three units, one rule
+
+```
+Action.INIT          for each non-git folder with visible content
+Action.COMMIT_STALE  for each dirty repo idle >= --stale-age days
+Action.FETCH         for each repo with a remote (when --sync)
+Action.PUSH          for each repo with an upstream    (when --push)
+```
+
+**Every commit `tidy` makes carries the trailer
+`Project-Commander-Hygiene: true`** (constant `HYGIENE_TRAILER`).
+That trailer is the boundary between *work* and *housekeeping*. The
+push executor refuses any branch that has at least one hygiene
+commit in its `upstream..HEAD` range.
+
+### Planning vs execution
+
+`plan(report, config, now)` is **pure** — same inputs, same plan, no
+subprocesses. It returns `list[PlannedAction]`. Tests live in
+`tests/test_tidy.py` and don't shell out.
+
+`execute(action, dry_run)` runs the actual git commands via the
+private `_git()` helper (which uses `subprocess.run(check=False, ...)`,
+so we can branch on return code). Each executor returns an
+`ExecutedAction` with an `ok` flag plus stdout/stderr.
+
+If you add a new action kind:
+
+1. Extend the `Action` enum.
+2. Add an executor `execute_<kind>()` returning `ExecutedAction`.
+3. Register it in `_EXECUTORS`.
+4. Decide in `plan()` when it should be queued.
+5. Add a justfile recipe if it deserves a top-level alias.
+6. Cover it in `tests/test_tidy.py`.
+
+### Why not reuse `aggregator.build_all` for tidy discovery?
+
+Tidy needs git state and a rough "last activity" timestamp — not
+every agent's session history. Walking seven scanners across 80
+projects to make a hygiene decision is wasteful. `_build_reports`
+in `tidy.py` runs only the git scanner and falls back to filesystem
+mtime (skipping `.git/`, `node_modules/`, caches, etc.) for
+`last_active`. If you find yourself wanting more signals here,
+consider whether what you really want is the full report.
+
+### Safety guardrails
+
+- `git commit --no-verify` is used so pre-commit hooks don't block
+  hygiene commits.
+- The push executor never runs `git push --force` and never amends.
+- `_has_visible_content` ignores hidden files (so a folder with
+  only `.DS_Store` does not get auto-init'd).
+- `commit-stale` requires `last_active` to be present (a project
+  with no signals at all is left alone).
+- `--dry-run` always pre-renders the same plan that execution would
+  follow, so nothing happens during preview.
+
 
 ## Candidate signal sources
 

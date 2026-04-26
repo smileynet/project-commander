@@ -8,6 +8,10 @@
   a handful of projects last week. You can't recall which. You have
   uncommitted work *somewhere*; you don't want to context-switch
   until you find it.
+- **Things slip through the cracks.** With this many projects, some
+  never got `git init`'d. Others have weeks of uncommitted work you
+  forgot about. Forks are out of sync with upstream. You don't have
+  time to manually check 60 folders for hygiene.
 - **Your plans lie to you.** That `PLAN.md` says "completed". You
   committed three times to that project on Wednesday. Either the
   plan is stale or you forgot the project shipped — and you can't
@@ -128,6 +132,34 @@ projects every agent in your stack has converged on (often
 unintended — the place leakage happens). `procedural-prompts` flags
 projects where you're approving an agent rather than directing one.
 
+**Catching up on hygiene.**
+
+```sh
+project-commander tidy --dry-run   # show what would change
+project-commander tidy             # do it
+project-commander tidy --sync      # also `git fetch` everywhere
+project-commander tidy --push      # push only branches that don’t contain hygiene commits
+```
+
+By default the `tidy` subcommand runs two opinionated, safe-by-design
+actions across `~/code`:
+
+- **Init repos that aren't repos.** A folder with content but no `.git/`
+  gets `git init` + an initial commit. Tagged with the hygiene trailer
+  (see below) so it's identifiable as auto-created later.
+- **Checkpoint stale dirty trees.** Working trees that have been dirty
+  for at least seven days get one auto-commit. The message says it's a
+  hygiene checkpoint, not curated work.
+
+Every commit `tidy` makes carries a `Project-Commander-Hygiene: true`
+trailer. That's the boundary between *work you did* and *housekeeping
+the tool did*. The push policy honors it: even with `--push`, the tool
+**refuses to push any branch that has hygiene commits in its unpushed
+range** — only your real work gets pushed.
+
+Tunable knobs: `--no-init`, `--no-commit`, `--stale-age N`, `--sync`,
+`--push`, `--project <glob>`, `--exclude <glob>`. Run
+`project-commander tidy --help` for the full list.
 ## Run it the easy way with just
 
 A `justfile` ships at the repo root. Common recipes:
