@@ -22,27 +22,31 @@ python skills/pc-triage/scripts/triage.py --since 7
 
 `just triage` and `just triage-week` are aliases.
 
+## Now in core
+
+Two skills sketched in earlier drafts have since been implemented as
+subcommands and no longer need separate skill bundles:
+
+- **`pc-resume`** → `project-commander report --project NAME` opens the
+  4-question briefing card (with optional LLM-synthesized prose for the
+  identity / activity / plan sections). Run that directly when you want a
+  session-resumption brief.
+- **`pc-weekly`** → `project-commander report --since 7` opens with a
+  cross-project narrative recap (LLM-synthesized when a provider is
+  available) followed by the deterministic triage table. Use
+  `--format markdown` for a shareable journal entry.
+
 ## Candidate skills (sketched, not yet implemented)
 
-These would be useful additions; designs are noted so anyone (or
-some future self) can pick them up:
-
-### pc-resume
-Given a project name, produce a session-resumption brief: what the
-project is for, where you left off, what's flagged, and a proposed
-next action. Replaces the manual ritual of opening the detail view +
-reading three plan docs + grepping git log before you can write a
-line of code.
-
-### pc-weekly
-Weekly review: runs `--since 7 --format markdown`, prompts the user
-for a one-line reflection per project that moved, outputs a journal
-entry suitable for end-of-week wrap-ups or sharing.
+These would be useful additions on top of the core; designs are noted
+so anyone (or some future self) can pick them up:
 
 ### pc-handoff
 Given a project name, produce a handoff document for a teammate (or
 future self): purpose, current state, recent work, and in-flight
-todos extracted from the most recent agent prompts.
+todos extracted from the most recent agent prompts. Largely subsumed
+by the briefing card already, but a focused "prepare this for someone
+else" framing would still be useful.
 
 ## Installing into your harness
 

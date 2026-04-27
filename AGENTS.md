@@ -26,7 +26,7 @@ src/project_commander/
 ├── audit.py          prompt → commit causality + ratios (J7 — audit agent behavior)
 ├── recap.py          per-period retrospective narrative (J6 — reconstruct)
 ├── narrative.py      optional LLM narrator (anthropic/openai/ollama) for
-│                     three detail-card sections; fail-soft to deterministic
+│                     detail-card sections + weekly recap; fail-soft to deterministic
 ├── report.py         render_table (J2 fleet) / render_review (J2 weekly) /
 │                     render_detail (J1 briefing card) / render_json / render_markdown
 └── sources/
@@ -47,7 +47,7 @@ tests/
 ├── test_audit.py        prompt → commit window matching + ratios + flags
 ├── test_recap.py        category routing + narrative synthesis
 ├── test_narrative.py    narrator providers (mocked HTTP), cache, JSON parsing,
-│                        wiring through render_detail with FakeNarrator
+│                        wiring through render_detail + render_review_markdown
 ├── test_roots.py        multi-root discovery + dedup + env-var precedence
 └── test_observations.py chrome stripping, sentence truncation, plan-doc parsing,
                         Outstanding builder, next-action synthesis

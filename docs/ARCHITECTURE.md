@@ -203,7 +203,7 @@ The seven signal sources, in detail:
 
 | Source | Reads | Contributes |
 |---|---|---|
-| **git** | The repo itself | Branch, dirty flag, last 10 commits with subjects + timestamps. The objective record. |
+| **git** | The repo itself | Branch, dirty flag, last 50 commits with subjects + timestamps (configurable per subcommand: 200 for `audit`, 500 for `recap`). The objective record. |
 | **Claude Code** | `~/.claude/projects/<encoded-cwd>/*.jsonl` | Prompts you typed at Claude in this directory. The *intent* signal — what you asked for, in your words. |
 | **Gemini CLI** | `~/.gemini/tmp/<basename>/{logs.json,chats/}` | Prompts and chats from Gemini sessions. |
 | **Oh-My-Pi** | `~/.omp/agent/sessions/-code-<name>/*.jsonl` | OMP harness session prompts. |
@@ -647,10 +647,16 @@ fetch, then optional push.
 
 Three behavioral guarantees:
 
-- **Reads from disk every run.** No cache, no daemon, no database.
-  If the report changes, something on disk changed.
-- **Heuristics, not LLMs.** All intent and progress detection is
-  rule-based. Same input, same report. Fast, free, offline.
+- **Reads from disk every run.** No daemon, no database. The deterministic
+  core has no cache; the LLM narrator has a content-addressed cache under
+  `$XDG_CACHE_HOME/project-commander/narrative/` keyed by
+  `SHA-256(prompt + model_id)`, so any change to a project's signals
+  invalidates the entry automatically.
+- **Deterministic core.** All progress detection, intent extraction, plan-drift
+  classification, and triage bucketing is rule-based. Same input, same output.
+  The optional LLM narrator augments three prose surfaces (detail card, weekly
+  recap, recap paragraphs); the deterministic core is what ships and what falls
+  back when no provider is reachable.
 - **One bad source can't break a report.** Per-source and per-project
   failures are caught and surfaced as a single failure row instead of
   taking down the whole run.
@@ -658,26 +664,44 @@ Three behavioral guarantees:
 ## What you can ask for
 
 ```
-  # report — read only
+  # report --- read only
   project-commander report                              all projects, sorted by recency
-  project-commander report --since 7                    only projects active in the last week
+  project-commander report --since 7                    weekly review (N <= 30) with cross-project recap
   project-commander report --limit 20                   top 20 most-recent
-  project-commander report --project cdda_*             detail view for matching folders
+  project-commander report --project cdda_*             4-question briefing card
   project-commander report --exclude pi-*               hide noisy folders
   project-commander report --format json                structured output
   project-commander report --format markdown            shareable report
   project-commander report --disable kiro               skip a source you don't use
   project-commander report --root /other/path           scan a specific root (repeatable)
+  project-commander report --no-llm                     force deterministic synthesis
 
-  # tidy — applies actions; --dry-run shows the plan first
+  # tidy --- applies actions; --dry-run shows the plan first
   project-commander tidy --dry-run                      preview hygiene plan, do nothing
   project-commander tidy                                run init + commit-stale (default on)
   project-commander tidy --no-commit                    init only; never auto-commit dirty trees
   project-commander tidy --stale-age 14                 raise stale threshold from 7 to 14 days
   project-commander tidy --sync                         + git fetch --all per repo
   project-commander tidy --push                         + push branches with no hygiene commits
+  project-commander tidy --prune                        + plan ARCHIVE moves for dormant clean projects
 
-  # roots — same resolution policy for both subcommands
+  # catchup --- delta digest since persisted cursor
+  project-commander catchup                             show deltas since last invocation, advance cursor
+  project-commander catchup --since 6h                  preview a window without advancing
+  project-commander catchup --reset-cursor              start fresh
+
+  # verify --- closure checks suitable for agent chaining
+  project-commander verify --project NAME --format json   structured PASS/FAIL
+  project-commander verify                                fleet-wide JSON array, exit 1 on any FAIL
+
+  # audit --- prompt to commit causality
+  project-commander audit --project NAME --since 30     ratios, orphans, plan-drift flag
+
+  # recap --- per-project retrospective narrative
+  project-commander recap --quarter                     paragraph per project, by category
+  project-commander recap --since 30                    arbitrary day window
+
+  # roots --- same resolution policy for every subcommand
   project-commander report                              auto-detect $HOME conventions
   PROJECT_COMMANDER_ROOTS=~/work:~/clients pcmd report  scan two roots from env var
   pcmd tidy --root ~/work --root ~/personal             scan two roots from flags
