@@ -109,8 +109,14 @@ def _phrase_join(items: list[str]) -> str:
 
 
 def synthesize(report: ProjectReport, *, since: datetime, now: datetime,
-               category: str) -> str:
-	"""Produce the per-project paragraph."""
+               category: str, narrator=None) -> str:
+	"""Produce the per-project paragraph.
+
+	If a narrator is supplied and returns usable prose, the LLM-synthesized
+	"what's been happening" paragraph replaces the deterministic body. The
+	category header (Shipped / Major arc / Started but paused / Quiet activity)
+	is still added in front so the section structure stays intact.
+	"""
 	commits = [s for s in report.signals if s.kind == "commit" and s.timestamp >= since]
 	obs = report.observations
 	purpose_sentence = ""
@@ -121,6 +127,7 @@ def synthesize(report: ProjectReport, *, since: datetime, now: datetime,
 	topics = _commit_topics(commits)
 	commits_count = len(commits)
 
+	llm_body = _maybe_llm_recap_body(report, obs, narrator)
 	parts: list[str] = []
 	if purpose_sentence:
 		parts.append(purpose_sentence)
@@ -148,11 +155,31 @@ def synthesize(report: ProjectReport, *, since: datetime, now: datetime,
 		if topics:
 			body += f", touching {_phrase_join(topics)}"
 		parts.append(body + ".")
+	if llm_body:
+		parts.append(llm_body)
 	return " ".join(parts)
 
 
-def build_entries(reports: Iterable[ProjectReport], *, since: datetime, now: datetime
-                  ) -> list[RecapEntry]:
+def _maybe_llm_recap_body(report: ProjectReport, obs, narrator) -> str:
+	"""Optional LLM-synthesized 'whats_been_happening' paragraph for recap."""
+	if narrator is None:
+		return ""
+	try:
+		from .narrative import collect_inputs
+	except ImportError:
+		return ""
+	try:
+		inputs = collect_inputs(report, obs)
+		out = narrator.narrate(inputs)
+	except Exception:
+		return ""
+	if out is None:
+		return ""
+	return out.whats_been_happening.strip()
+
+
+def build_entries(reports: Iterable[ProjectReport], *, since: datetime, now: datetime,
+                  narrator=None) -> list[RecapEntry]:
 	entries: list[RecapEntry] = []
 	for report in reports:
 		category = categorize(report, since=since, now=now)
@@ -163,7 +190,7 @@ def build_entries(reports: Iterable[ProjectReport], *, since: datetime, now: dat
 		           and not is_procedural(s.summary)]
 		first = min((s.timestamp for s in commits), default=None)
 		last = max((s.timestamp for s in commits), default=None)
-		narrative = synthesize(report, since=since, now=now, category=category)
+		narrative = synthesize(report, since=since, now=now, category=category, narrator=narrator)
 		entries.append(RecapEntry(
 			project=report.name, category=category,
 			commits=len(commits), prompts=len(prompts),
@@ -289,7 +316,9 @@ def run(args: argparse.Namespace) -> int:
 		now, quarter=args.quarter, year=args.year, month=args.month,
 		since_days=args.since_days,
 	)
-	entries = build_entries(reports, since=since, now=now)
+	from .cli import resolve_narrator
+	narrator = resolve_narrator(args)
+	entries = build_entries(reports, since=since, now=now, narrator=narrator)
 
 	if args.format == "markdown":
 		sys.stdout.write(render_markdown(entries, label=label, since=since, now=now))

@@ -494,3 +494,65 @@ def test_render_review_markdown_uses_jtbd_triage_sections():
 	assert "  - Start with:" not in text
 	# Fleet-table format does not appear in review output
 	assert "| Project |" not in text
+
+
+def test_render_detail_markdown_uses_narrator_when_provided():
+	from project_commander import narrative
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Fake:
+		def narrate(self, inputs):
+			return narrative.NarrativeOutput(
+				what_it_is="Synthesized identity prose lives here.",
+				whats_been_happening="Synthesized history prose lives here.",
+				whats_planned="Synthesized plan prose lives here.",
+			)
+
+	text = render_detail_markdown(r, narrator=_Fake())
+	assert "Synthesized identity prose lives here." in text
+	assert "Synthesized history prose lives here." in text
+	assert "Synthesized plan prose lives here." in text
+	assert "_synthesized prose_" in text  # footer marker
+
+
+def test_render_detail_markdown_falls_back_when_narrator_returns_none():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Null:
+		def narrate(self, inputs):
+			return None
+
+	text = render_detail_markdown(r, narrator=_Null())
+	# Deterministic synthesis still runs.
+	assert "### What is it?" in text
+	assert "### What's been happening?" in text
+	# Footer must not claim synthesis happened.
+	assert "_synthesized prose_" not in text
+
+
+def test_render_detail_markdown_recovers_when_narrator_raises():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/x"), name="x", is_git_repo=True, git_branch="main",
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Boom:
+		def narrate(self, inputs):
+			raise RuntimeError("transport broken")
+
+	# Must not raise; falls back deterministically.
+	text = render_detail_markdown(r, narrator=_Boom())
+	assert "### What is it?" in text
+	assert "_synthesized prose_" not in text

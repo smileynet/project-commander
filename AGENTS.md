@@ -25,6 +25,8 @@ src/project_commander/
 ├── verify.py         per-project closure checks with structured exit code (J5 — verify)
 ├── audit.py          prompt → commit causality + ratios (J7 — audit agent behavior)
 ├── recap.py          per-period retrospective narrative (J6 — reconstruct)
+├── narrative.py      optional LLM narrator (anthropic/openai/ollama) for
+│                     three detail-card sections; fail-soft to deterministic
 ├── report.py         render_table (J2 fleet) / render_review (J2 weekly) /
 │                     render_detail (J1 briefing card) / render_json / render_markdown
 └── sources/
@@ -44,6 +46,8 @@ tests/
 ├── test_verify.py       per-check PASS/FAIL/SKIP + verdict aggregation + JSON shape
 ├── test_audit.py        prompt → commit window matching + ratios + flags
 ├── test_recap.py        category routing + narrative synthesis
+├── test_narrative.py    narrator providers (mocked HTTP), cache, JSON parsing,
+│                        wiring through render_detail with FakeNarrator
 ├── test_roots.py        multi-root discovery + dedup + env-var precedence
 └── test_observations.py chrome stripping, sentence truncation, plan-doc parsing,
                         Outstanding builder, next-action synthesis

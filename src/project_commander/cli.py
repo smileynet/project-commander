@@ -71,6 +71,13 @@ def _add_common_scan_args(parser: argparse.ArgumentParser) -> None:
                         help="skip a source (repeatable)")
     parser.add_argument("--no-color", action="store_true",
                         help="disable colored output")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="disable LLM-synthesized prose; force deterministic synthesis")
+    parser.add_argument("--llm-provider", choices=["auto", "anthropic", "openai", "ollama", "none"],
+                        default=None,
+                        help="LLM provider for synthesized prose (default: auto-detect from env)")
+    parser.add_argument("--llm-model", default=None,
+                        help="override the LLM model id")
 
 
 def _add_report_args(parser: argparse.ArgumentParser) -> None:
@@ -86,6 +93,21 @@ def resolve_roots(args: argparse.Namespace) -> list[Path]:
     """Resolve project roots from --root flags or fallback to defaults."""
     return ([Path(r).expanduser().resolve() for r in args.root]
             or _default_roots(args.home))
+
+def resolve_narrator(args: argparse.Namespace):
+    """Build a Narrator from CLI flags + environment.
+
+    Returns a DisabledNarrator (Narrator that always returns None) when the user
+    passed --no-llm or no provider could be auto-detected. Callers that pass it
+    to render_detail / build_entries will therefore fall back deterministically.
+    """
+    from .narrative import make_narrator
+    if getattr(args, "no_llm", False):
+        return make_narrator(provider="none")
+    provider = (getattr(args, "llm_provider", None)
+                or os.environ.get("PROJECT_COMMANDER_LLM")
+                or "auto")
+    return make_narrator(provider=provider, model=getattr(args, "llm_model", None))
 
 
 def build_reports(args: argparse.Namespace, *, git_recent_commits: int = 50):
@@ -151,11 +173,13 @@ def _run_report(args: argparse.Namespace) -> int:
         if args.format == "json":
             sys.stdout.write(report.render_json(reports) + "\n")
         elif args.format == "markdown":
-            parts = [report.render_detail_markdown(r) for r in reports]
+            narrator = resolve_narrator(args)
+            parts = [report.render_detail_markdown(r, narrator=narrator) for r in reports]
             sys.stdout.write("\n---\n\n".join(parts))
         else:
+            narrator = resolve_narrator(args)
             for r in reports:
-                report.render_detail(r, console)
+                report.render_detail(r, console, narrator=narrator)
         return 0
 
     if args.format == "json":

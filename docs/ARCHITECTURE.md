@@ -328,6 +328,103 @@ The card carries one footer line of source pointers, not a section of evidence:
 
 If the reader wants the underlying material, the footer points them straight at it. The detail card itself never enumerates raw commits or prompts — the user can open the listed file or run `git log` directly.
 
+## Optional LLM narrative layer
+
+The deterministic synthesis hits a ceiling on three of the four detail-card
+fields: identity, recent activity, and planned next work. An LLM narrator can
+do better there, specifically by distinguishing *what landed* (commits) from
+*what was discussed* (prompts without follow-up commits) and by surfacing
+contradictions between plan claims and commit reality.
+
+The fourth section (`Where it stands`) and the status header / Inspect footer
+stay deterministic --- they are mechanical state and the user needs them as an
+audit anchor next to the synthesized prose.
+
+### Provider abstraction
+
+`narrative.py` defines a single protocol:
+
+```python
+class Narrator(Protocol):
+    def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None: ...
+```
+
+Three concrete implementations reach external services over `urllib` (no new
+dependencies):
+
+- `AnthropicNarrator` --- requires `ANTHROPIC_API_KEY`. Default model:
+  `claude-3-5-haiku-latest`.
+- `OpenAINarrator` --- requires `OPENAI_API_KEY`. Default model: `gpt-4o-mini`.
+  Uses `response_format: {"type": "json_object"}` for parse reliability.
+- `OllamaNarrator` --- talks to `OLLAMA_HOST` (default `http://localhost:11434`).
+  Default model: `llama3.1`. 120-second timeout for cold starts.
+
+Plus `DisabledNarrator`, which always returns `None`, used when no provider is
+available or when the user passes `--no-llm`.
+
+Auto-detection order: anthropic > openai > ollama > disabled. Override with
+`--llm-provider {auto,anthropic,openai,ollama,none}` or
+`PROJECT_COMMANDER_LLM`. Override the model with `--llm-model` or
+`PROJECT_COMMANDER_LLM_MODEL`.
+
+### Fail-soft, three layers
+
+Narration must never break a report. Failure paths that return `None` and
+trigger deterministic fallback:
+
+1. No provider configured (`DisabledNarrator`).
+2. Provider call raises (timeout, 4xx, 5xx, malformed transport). Errors are
+   logged to stderr only when `PROJECT_COMMANDER_LLM_VERBOSE=1`.
+3. Output JSON malformed, missing keys, or fields trivially short (<8 chars).
+
+When narration is *used*, the Inspect footer prepends `_synthesized prose_` so
+the reader knows the body was LLM-generated and can rerun with `--no-llm` to
+compare.
+
+### Caching
+
+Content-addressed JSON cache under
+`$XDG_CACHE_HOME/project-commander/narrative/`. The cache key is
+`SHA-256(prompt_text + model_id)`. Any change in prompt --- new commit, new
+prompt, edited README/PLAN, different model --- yields a different key, so
+stale entries are simply never hit. There is no TTL.
+
+Failure outputs are *not* cached: a transient API error never poisons future
+runs.
+
+### Prompt contract
+
+One user message per project carrying capped excerpts:
+
+- Identity: up to 2 of `README.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`,
+  600 chars each.
+- Plan: first hit of `PLAN.md` / `ROADMAP.md` / `NEXT_STEPS.md` /
+  `IMPROVEMENTS.md` / `TODO.md`, 1000 chars.
+- Recent commits: 30 most recent subjects with dates.
+- Recent substantive prompts: 15 most recent subjects with dates and source
+  (procedural one-word approvals are filtered out by `is_procedural`).
+- Branch state: branch, dirty/uncommitted count, ahead/behind upstream,
+  last activity timestamp.
+
+Total input: roughly 1500-2000 tokens per project.
+
+The system prompt enforces 2-4 sentences per field, plain prose, no marketing
+language, distinguish shipped from attempted, and never invent. Output is
+strict JSON with three keys: `what_it_is`, `whats_been_happening`,
+`whats_planned`.
+
+### Where the narrator runs
+
+- `report --project NAME` --- on by default. Single project, one cached call.
+- `report --project NAME --format markdown` --- on by default.
+- `report` (fleet table) --- not invoked. One-line cells do not benefit.
+- `report --since 7` (weekly review) --- not invoked. One-line entries.
+- `recap` --- on by default. Per-project paragraphs benefit substantially.
+- `tidy` / `verify` / `audit` / `catchup` --- not invoked. Their output is
+  about state, not narrative.
+
+Pass `--no-llm` to force deterministic synthesis on any surface.
+
 ## Period in review (`--since N`)
 
 When `--since` is set with `N ≤ 30`, the report switches from a fleet table to a scan-first triage digest. The aim is brutal compression: a reader with dozens of projects sees, in seconds, *what needs me, what's new, what moved.*

@@ -127,8 +127,13 @@ def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int)
 
 # ───── per-project briefing card ─────────────────────────────────────────────
 
-def render_detail(report: ProjectReport, console: Console) -> None:
-	"""Project briefing card: 4 narrative answers, 1 footer line of source pointers."""
+def render_detail(report: ProjectReport, console: Console, *, narrator=None) -> None:
+	"""Project briefing card: 4 narrative answers, 1 footer line of source pointers.
+
+	When a narrator is supplied and returns usable prose, three of the four
+	sections (What is it / What's been happening / What's planned next) are
+	rendered from the synthesized output instead of the deterministic helpers.
+	"""
 	obs = report.observations
 	console.rule(f"[bold cyan]{report.name}")
 	console.print(f"[dim]{report.path}[/dim]")
@@ -136,13 +141,16 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 		console.print()
 		console.print(f"[bold]Intent:[/bold] {report.intent or '(none)'}")
 		return
+	narration = _maybe_narrate(report, obs, narrator)
 	console.print()
 	console.print(_status_header_term(report, obs))
 	console.print()
-	_print_section(console, "What is it?", _what_is_it(report, obs))
-	_print_section(console, "What's been happening?", _whats_been_happening(report, obs))
+	what = narration.what_it_is if narration else _what_is_it(report, obs)
+	happened = narration.whats_been_happening if narration else _whats_been_happening(report, obs)
+	planned = narration.whats_planned if narration else _whats_planned_next(report, obs)
+	_print_section(console, "What is it?", what)
+	_print_section(console, "What's been happening?", happened)
 	_print_section(console, "Where it stands", _where_it_stands(report, obs))
-	planned = _whats_planned_next(report, obs)
 	first = obs.next_action
 	console.print("[bold cyan]What's planned next[/bold cyan]")
 	console.print(f"  {planned}")
@@ -150,27 +158,28 @@ def render_detail(report: ProjectReport, console: Console) -> None:
 		console.print()
 		console.print(f"  [bold green]Your first action:[/bold green] {first}")
 	console.print()
-	footer = _inspect_footer(report, obs)
+	footer = _inspect_footer(report, obs, narration_used=narration is not None)
 	if footer:
 		console.print(f"[dim]Inspect: {footer}[/dim]")
 
 
-def render_detail_markdown(report: ProjectReport) -> str:
+def render_detail_markdown(report: ProjectReport, *, narrator=None) -> str:
 	"""Markdown briefing card: 4 narrative sections, footer pointer line."""
 	obs = report.observations
 	lines: list[str] = [f"# {report.name}", "", f"`{report.path}`", ""]
 	if obs is None:
 		lines.append(f"_Intent: {report.intent or '(none)'}_")
 		return "\n".join(lines).rstrip() + "\n"
+	narration = _maybe_narrate(report, obs, narrator)
 	lines.append(_status_header_md(report, obs))
 	lines.append("")
 	lines.append("### What is it?")
 	lines.append("")
-	lines.append(_md_safe(_what_is_it(report, obs)))
+	lines.append(_md_safe(narration.what_it_is if narration else _what_is_it(report, obs)))
 	lines.append("")
 	lines.append("### What's been happening?")
 	lines.append("")
-	lines.append(_md_safe(_whats_been_happening(report, obs)))
+	lines.append(_md_safe(narration.whats_been_happening if narration else _whats_been_happening(report, obs)))
 	lines.append("")
 	lines.append("### Where it stands")
 	lines.append("")
@@ -178,18 +187,34 @@ def render_detail_markdown(report: ProjectReport) -> str:
 	lines.append("")
 	lines.append("### What's planned next")
 	lines.append("")
-	lines.append(_md_safe(_whats_planned_next(report, obs)))
+	lines.append(_md_safe(narration.whats_planned if narration else _whats_planned_next(report, obs)))
 	if obs.next_action:
 		lines.append("")
 		lines.append(f"**Your first action:** {_md_safe(obs.next_action)}")
 	lines.append("")
-	footer = _inspect_footer(report, obs)
+	footer = _inspect_footer(report, obs, narration_used=narration is not None)
 	if footer:
 		lines.append("---")
 		lines.append("")
 		lines.append(f"<sub>Inspect: {_md_safe(footer)}</sub>")
 		lines.append("")
 	return "\n".join(lines).rstrip() + "\n"
+
+
+def _maybe_narrate(report: ProjectReport, obs: Observations, narrator):
+	"""Return a NarrativeOutput if the narrator yields usable prose, else None."""
+	if narrator is None:
+		return None
+	try:
+		from .narrative import collect_inputs
+	except ImportError:
+		return None
+	try:
+		inputs = collect_inputs(report, obs)
+		return narrator.narrate(inputs)
+	except Exception:
+		# Narration must never break a report. Fall back deterministically.
+		return None
 
 
 # ───── tabular renderers (unchanged shape — fleet table + JSON) ──────────────
@@ -777,9 +802,11 @@ def _purpose_ref(report: ProjectReport) -> str:
 	return ""
 
 
-def _inspect_footer(report: ProjectReport, obs: Observations) -> str:
+def _inspect_footer(report: ProjectReport, obs: Observations, *, narration_used: bool = False) -> str:
 	"""Single-line list of source pointers for further inspection."""
 	parts: list[str] = []
+	if narration_used:
+		parts.append("_synthesized prose_")
 	plan_ref = _best_plan_ref(report) or obs.outstanding.plan_doc_ref
 	if plan_ref:
 		parts.append(f"plan `{plan_ref}`")
@@ -794,7 +821,7 @@ def _inspect_footer(report: ProjectReport, obs: Observations) -> str:
 		parts.append(f"identity `{identity_ref}`")
 	if obs.outstanding.git_uncommitted_count > 0:
 		parts.append(f"working tree ({obs.outstanding.git_uncommitted_count} files)")
-	return " · ".join(parts)
+	return " \u00b7 ".join(parts)
 
 
 def _print_section(console: Console, title: str, body: str) -> None:
