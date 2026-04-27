@@ -418,12 +418,21 @@ strict JSON with three keys: `what_it_is`, `whats_been_happening`,
 - `report --project NAME` --- on by default. Single project, one cached call.
 - `report --project NAME --format markdown` --- on by default.
 - `report` (fleet table) --- not invoked. One-line cells do not benefit.
-- `report --since 7` (weekly review) --- not invoked. One-line entries.
+- `report --since N` (weekly review, N <= 30) --- on by default. **One** call per invocation, not per project. Returns a 3-5 sentence cross-project recap that goes between the totals subtitle and the deterministic triage sections; the triage rows themselves stay deterministic.
 - `recap` --- on by default. Per-project paragraphs benefit substantially.
 - `tidy` / `verify` / `audit` / `catchup` --- not invoked. Their output is
   about state, not narrative.
 
 Pass `--no-llm` to force deterministic synthesis on any surface.
+
+### The weekly recap is a different shape from the per-project narration
+
+Per-project narration (`narrate`) replaces the body of three sections inside one project. The weekly recap (`narrate_weekly`) does something orthogonal: it synthesizes one paragraph across the *aggregated* triage data of every active project in the window. The Narrator protocol carries both methods; each provider implements both via a shared `_chat(system, user, *, max_tokens)` helper.
+
+Weekly inputs (`WeeklyInputs`) carry the same triage data the deterministic renderer produces --- window dates, totals, and the three buckets (top 8 each). The system prompt enforces 3-5 sentences, plain prose, name specific projects, surface cross-project themes, and never invent. Output is `{"week_in_review": "..."}`.
+
+Two cache namespaces share the same root directory: detail entries (model id only) and weekly entries (model id + `"::weekly"`). Same SHA-256 keying, same fail-soft semantics.
+
 
 ## Period in review (`--since N`)
 

@@ -556,3 +556,85 @@ def test_render_detail_markdown_recovers_when_narrator_raises():
 	text = render_detail_markdown(r, narrator=_Boom())
 	assert "### What is it?" in text
 	assert "_synthesized prose_" not in text
+
+
+
+def test_render_review_markdown_uses_weekly_narrator_when_provided():
+	from project_commander import narrative
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/active"), name="active", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py"],
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Fake:
+		def narrate(self, inputs):
+			return None
+		def narrate_weekly(self, inputs):
+			return narrative.WeeklyOutput(
+				week_in_review="You shipped on active and parked a dirty tree mid-week.",
+			)
+
+	text = render_review_markdown([r], since_days=7, narrator=_Fake())
+	assert "## Week in review" in text
+	assert "You shipped on active" in text
+	assert "<sub>_synthesized prose_</sub>" in text
+	# The deterministic triage still appears below it
+	assert "## Needs your attention" in text
+
+
+def test_render_review_markdown_falls_back_when_weekly_narrator_returns_none():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/active"), name="active", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py"],
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Null:
+		def narrate(self, inputs):
+			return None
+		def narrate_weekly(self, inputs):
+			return None
+
+	text = render_review_markdown([r], since_days=7, narrator=_Null())
+	assert "## Week in review" not in text
+	assert "_synthesized prose_" not in text
+	assert "## Needs your attention" in text
+
+
+def test_render_review_markdown_skips_narrator_when_no_signal():
+	# Empty roster -> we never bother the LLM at all
+	count = {"calls": 0}
+
+	class _Counting:
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs):
+			count["calls"] += 1
+			return None
+
+	text = render_review_markdown([], since_days=7, narrator=_Counting())
+	assert count["calls"] == 0
+	assert "Nothing moved" in text
+
+
+def test_render_review_markdown_recovers_when_weekly_narrator_raises():
+	now = _now()
+	r = ProjectReport(
+		path=Path("/tmp/active"), name="active", is_git_repo=True, git_branch="main",
+		git_dirty=True, git_uncommitted=[" M a.py"],
+		signals=[_commit(now - timedelta(hours=1), "feat: ship")],
+	)
+	r.observations = build(r, now=now)
+
+	class _Boom:
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs):
+			raise RuntimeError("transport broken")
+
+	text = render_review_markdown([r], since_days=7, narrator=_Boom())
+	assert "## Week in review" not in text
+	assert "## Needs your attention" in text

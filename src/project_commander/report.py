@@ -72,8 +72,14 @@ def render_table(reports: Iterable[ProjectReport], console: Console) -> None:
 
 # ───── period digest (week-in-review) ────────────────────────────────────────
 
-def render_review(reports: Iterable[ProjectReport], *, since_days: int, console: Console) -> None:
-	"""Period digest, terminal styling. Three sections, one line per project."""
+def render_review(reports: Iterable[ProjectReport], *, since_days: int, console: Console,
+                  narrator=None) -> None:
+	"""Period digest, terminal styling. Three sections, one line per project.
+
+	When `narrator` is supplied and returns a usable `WeeklyOutput`, a 3-5
+	sentence narrative recap is printed between the totals subtitle and the
+	triage sections. The triage sections themselves are deterministic.
+	"""
 	rows = list(reports)
 	now = datetime.now(tz=timezone.utc)
 	cutoff = _cutoff(now, since_days)
@@ -83,8 +89,15 @@ def render_review(reports: Iterable[ProjectReport], *, since_days: int, console:
 	console.print(Rule(f"[bold]Last {since_days} day(s)[/bold]", style="cyan"))
 	subtitle = f"since {cutoff.date().isoformat()}"
 	if totals:
-		subtitle = f"{subtitle}  ·  {totals}"
+		subtitle = f"{subtitle}  \u00b7  {totals}"
 	console.print(f"[dim]{subtitle}[/dim]")
+	recap = _maybe_narrate_weekly(rows, since_days=since_days, cutoff=cutoff,
+	                              now=now, sections=sections, narrator=narrator)
+	if recap:
+		console.print()
+		console.print("[bold cyan]Week in review[/bold cyan]")
+		console.print(f"  {recap}")
+		console.print("[dim]  _synthesized prose_[/dim]")
 	if not any(entries for _, _, entries in sections):
 		console.print()
 		console.print("  [dim](nothing moved, nothing needs attention)[/dim]")
@@ -95,7 +108,8 @@ def render_review(reports: Iterable[ProjectReport], *, since_days: int, console:
 		_print_review_section(console, title, blurb, entries)
 
 
-def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int) -> str:
+def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int,
+                           narrator=None) -> str:
 	"""Period digest, markdown form. Mirror of `render_review`."""
 	rows = list(reports)
 	now = datetime.now(tz=timezone.utc)
@@ -104,8 +118,17 @@ def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int)
 	totals = _review_totals_str(rows, cutoff=cutoff)
 	subtitle = f"_Since {cutoff.date().isoformat()}_"
 	if totals:
-		subtitle = f"_Since {cutoff.date().isoformat()} · {totals}_"
+		subtitle = f"_Since {cutoff.date().isoformat()} \u00b7 {totals}_"
 	lines = [f"# Last {since_days} day(s)", "", subtitle, ""]
+	recap = _maybe_narrate_weekly(rows, since_days=since_days, cutoff=cutoff,
+	                              now=now, sections=sections, narrator=narrator)
+	if recap:
+		lines.append("## Week in review")
+		lines.append("")
+		lines.append(_md_safe(recap))
+		lines.append("")
+		lines.append("<sub>_synthesized prose_</sub>")
+		lines.append("")
 	if not any(entries for _, _, entries in sections):
 		lines.append("_Nothing moved, nothing needs attention._")
 		return "\n".join(lines).rstrip() + "\n"
@@ -120,7 +143,7 @@ def render_review_markdown(reports: Iterable[ProjectReport], *, since_days: int)
 		for entry in entries[:_REVIEW_SECTION_CAP]:
 			lines.append(_review_row_md(entry))
 		if len(entries) > _REVIEW_SECTION_CAP:
-			lines.append(f"- _… +{len(entries) - _REVIEW_SECTION_CAP} more_")
+			lines.append(f"- _\u2026 +{len(entries) - _REVIEW_SECTION_CAP} more_")
 		lines.append("")
 	return "\n".join(lines).rstrip() + "\n"
 
@@ -215,6 +238,71 @@ def _maybe_narrate(report: ProjectReport, obs: Observations, narrator):
 	except Exception:
 		# Narration must never break a report. Fall back deterministically.
 		return None
+
+
+def _maybe_narrate_weekly(rows: Sequence[ProjectReport], *, since_days: int,
+                          cutoff: datetime, now: datetime,
+                          sections: list, narrator) -> str:
+	"""Synthesize a 3-5 sentence weekly recap, or empty string on any failure."""
+	if narrator is None:
+		return ""
+	# Skip the round-trip when there's no signal to summarize.
+	if not any(entries for _, _, entries in sections):
+		return ""
+	try:
+		import importlib.util
+		if importlib.util.find_spec("project_commander.narrative") is None:
+			return ""
+	except ImportError:
+		return ""
+	inputs = _build_weekly_inputs(rows, sections, since_days=since_days,
+	                              cutoff=cutoff, now=now)
+	try:
+		out = narrator.narrate_weekly(inputs)
+	except Exception:
+		# Narration must never break a report.
+		return ""
+	if out is None:
+		return ""
+	return out.week_in_review.strip()
+
+
+def _build_weekly_inputs(rows: Sequence[ProjectReport], sections: list, *,
+                         since_days: int, cutoff: datetime, now: datetime):
+	"""Pack the deterministic triage data into the LLM input shape."""
+	from .narrative import WeeklyInputs
+	active = 0
+	commits = 0
+	prompts = 0
+	for r in rows:
+		c, p = _review_counts(r, cutoff=cutoff)
+		if c or p:
+			active += 1
+		commits += c
+		prompts += p
+	buckets: dict[str, tuple[tuple[str, str, str], ...]] = {
+		"Needs your attention": (),
+		"New this week": (),
+		"Moved this week": (),
+	}
+	for title, _blurb, entries in sections:
+		capped = entries[:_REVIEW_SECTION_CAP]
+		rows_t = tuple(
+			(str(e["name"]), str(e.get("action") or ""), str(e.get("outcome") or ""))
+			for e in capped
+		)
+		buckets[title] = rows_t
+	return WeeklyInputs(
+		since_date=cutoff.date().isoformat(),
+		now_date=now.date().isoformat(),
+		since_days=since_days,
+		active_projects=active,
+		total_commits=commits,
+		total_prompts=prompts,
+		attention=buckets["Needs your attention"],
+		new_this_week=buckets["New this week"],
+		moved_this_week=buckets["Moved this week"],
+	)
 
 
 # ───── tabular renderers (unchanged shape — fleet table + JSON) ──────────────

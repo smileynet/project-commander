@@ -186,11 +186,13 @@ def _run_report(args: argparse.Namespace) -> int:
         sys.stdout.write(report.render_json(reports) + "\n")
     elif args.format == "markdown":
         if args.since is not None and args.since <= 30:
-            sys.stdout.write(report.render_review_markdown(reports, since_days=args.since))
+            narrator = resolve_narrator(args)
+            sys.stdout.write(report.render_review_markdown(reports, since_days=args.since, narrator=narrator))
         else:
             sys.stdout.write(report.render_markdown(reports))
     elif args.since is not None and args.since <= 30:
-        report.render_review(reports, since_days=args.since, console=console)
+        narrator = resolve_narrator(args)
+        report.render_review(reports, since_days=args.since, console=console, narrator=narrator)
     else:
         report.render_table(reports, console)
     return 0

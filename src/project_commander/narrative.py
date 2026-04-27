@@ -97,10 +97,36 @@ class NarrativeOutput:
 		)
 
 
+@dataclass(frozen=True)
+class WeeklyInputs:
+	"""Aggregated cross-project triage data for a weekly review LLM call."""
+
+	since_date: str             # ISO date, e.g. '2026-04-19'
+	now_date: str               # ISO date, today
+	since_days: int             # window length
+	active_projects: int
+	total_commits: int
+	total_prompts: int
+	attention: tuple[tuple[str, str, str], ...] = ()   # (name, action, outcome)
+	new_this_week: tuple[tuple[str, str, str], ...] = ()
+	moved_this_week: tuple[tuple[str, str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class WeeklyOutput:
+	"""LLM-synthesized week-in-review paragraph."""
+
+	week_in_review: str
+
+	def is_usable(self) -> bool:
+		return len(self.week_in_review.strip()) >= 16
+
+
 class Narrator(Protocol):
 	"""LLM-or-equivalent that turns NarrativeInputs into prose, or None."""
 
 	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None: ...
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None: ...
 
 
 # ─── input collection ────────────────────────────────────────────────────────
@@ -310,6 +336,89 @@ def _strip_code_fence(text: str) -> str:
 	return body.strip()
 
 
+_WEEKLY_SYSTEM_PROMPT = (
+	"You summarize a developer's recent activity across many projects (a 'weekly "
+	"review'). The user already sees a triage table below your output --- what "
+	"needs their attention, what's new, what moved. Your job is to give them the "
+	"3-5 sentence narrative that ties the week together: what they actually "
+	"shipped, what stalled, and any cross-project themes.\n"
+	"\n"
+	"You receive: window length, totals (active projects, commits, substantive "
+	"prompts), and three triage sections (attention, new, moved) with one line "
+	"per project containing a name, an action verb directive, and a brief "
+	"outcome description.\n"
+	"\n"
+	"Rules:\n"
+	"  - Plain prose. No lists. No markdown. No 'this week'.\n"
+	"  - 3-5 sentences total.\n"
+	"  - Lead with what shipped or moved, not what stalled.\n"
+	"  - Surface cross-project themes if you see them (e.g. 'three projects "
+	"saw test infrastructure work this week').\n"
+	"  - Cite projects by name. Never invent project names or outcomes that "
+	"are not in the input.\n"
+	"  - If the data is thin (few projects, few commits), say so plainly. Do "
+	"not pad with filler.\n"
+	"  - Mention specific stalled work if it materially blocks the user, but "
+	"do not turn the paragraph into a complaint.\n"
+	"\n"
+	"Output strictly as a JSON object with exactly one string key: "
+	'{"week_in_review": "..."}.'
+	" No prose before or after the JSON."
+)
+
+
+def build_weekly_message(inputs: WeeklyInputs) -> str:
+	"""Render the weekly triage data as the LLM's user-message body."""
+	lines: list[str] = []
+	lines.append(f"# Weekly review --- last {inputs.since_days} day(s)")
+	lines.append(f"Window: {inputs.since_date} to {inputs.now_date}")
+	lines.append(
+		f"Totals: {inputs.active_projects} active project(s), "
+		f"{inputs.total_commits} commit(s), "
+		f"{inputs.total_prompts} substantive prompt(s)"
+	)
+	lines.append("")
+
+	for heading, bucket in (
+		("## Needs your attention", inputs.attention),
+		("## New this week", inputs.new_this_week),
+		("## Moved this week", inputs.moved_this_week),
+	):
+		lines.append(heading)
+		if not bucket:
+			lines.append("(empty)")
+			lines.append("")
+			continue
+		for name, action, outcome in bucket:
+			parts = [f"- {name}:"]
+			if action:
+				parts.append(f"action='{_one_line(action, limit=140)}'")
+			if outcome:
+				parts.append(f"outcome='{_one_line(outcome, limit=200)}'")
+			if not action and not outcome:
+				parts.append("(no detail captured)")
+			lines.append(" ".join(parts))
+		lines.append("")
+
+	return "\n".join(lines).rstrip() + "\n"
+
+
+def parse_weekly_response(text: str) -> WeeklyOutput | None:
+	"""Best-effort parse of an LLM JSON payload into WeeklyOutput."""
+	body = _strip_code_fence(text.strip())
+	try:
+		payload = json.loads(body)
+	except json.JSONDecodeError:
+		return None
+	if not isinstance(payload, dict):
+		return None
+	v = payload.get("week_in_review", "")
+	if not isinstance(v, str):
+		return None
+	out = WeeklyOutput(week_in_review=v.strip())
+	return out if out.is_usable() else None
+
+
 def cache_root() -> Path:
 	base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
 	root = Path(base) / "project-commander" / "narrative"
@@ -364,6 +473,32 @@ class CachedNarrator:
 				pass
 		return out
 
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
+		root = self.root or cache_root()
+		prompt = build_weekly_message(inputs)
+		key = cache_key(prompt, self.model + "::weekly")
+		path = root / f"{key}.json"
+		if path.is_file():
+			try:
+				data = json.loads(path.read_text(encoding="utf-8"))
+				cached = WeeklyOutput(week_in_review=data["week_in_review"])
+				if cached.is_usable():
+					return cached
+			except (OSError, KeyError, json.JSONDecodeError, TypeError):
+				pass
+		out = self.inner.narrate_weekly(inputs)
+		if out is not None and out.is_usable():
+			try:
+				path.write_text(json.dumps({
+					"week_in_review": out.week_in_review,
+					"model": self.model,
+					"kind": "weekly",
+					"generated_at": datetime.now(tz=timezone.utc).isoformat(),
+				}, indent=2), encoding="utf-8")
+			except OSError:
+				pass
+		return out
+
 
 # ─── HTTP transport ──────────────────────────────────────────────────────────
 
@@ -406,26 +541,30 @@ class AnthropicNarrator:
 	timeout: float = _NETWORK_TIMEOUT_SEC
 	endpoint: str = "https://api.anthropic.com/v1/messages"
 
-	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+	def _chat(self, system: str, user: str, *, max_tokens: int = 1024) -> str | None:
 		body = {
 			"model": self.model,
-			"max_tokens": 1024,
-			"system": _SYSTEM_PROMPT,
-			"messages": [{"role": "user", "content": build_user_message(inputs)}],
+			"max_tokens": max_tokens,
+			"system": system,
+			"messages": [{"role": "user", "content": user}],
 		}
-		headers = {
-			"x-api-key": self.api_key,
-			"anthropic-version": "2023-06-01",
-		}
+		headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}
 		payload = _post_json(self.endpoint, headers, body, self.timeout)
 		if not payload:
 			return None
 		try:
-			text = payload["content"][0]["text"]
+			return payload["content"][0]["text"]
 		except (KeyError, IndexError, TypeError):
 			_warn("anthropic response shape unexpected")
 			return None
-		return parse_response(text)
+
+	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+		text = self._chat(_SYSTEM_PROMPT, build_user_message(inputs))
+		return parse_response(text) if text is not None else None
+
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
+		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
+		return parse_weekly_response(text) if text is not None else None
 
 
 @dataclass
@@ -435,26 +574,33 @@ class OpenAINarrator:
 	timeout: float = _NETWORK_TIMEOUT_SEC
 	endpoint: str = "https://api.openai.com/v1/chat/completions"
 
-	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+	def _chat(self, system: str, user: str, *, max_tokens: int = 1024) -> str | None:
 		body = {
 			"model": self.model,
 			"messages": [
-				{"role": "system", "content": _SYSTEM_PROMPT},
-				{"role": "user", "content": build_user_message(inputs)},
+				{"role": "system", "content": system},
+				{"role": "user", "content": user},
 			],
 			"response_format": {"type": "json_object"},
-			"max_tokens": 1024,
+			"max_tokens": max_tokens,
 		}
 		headers = {"Authorization": f"Bearer {self.api_key}"}
 		payload = _post_json(self.endpoint, headers, body, self.timeout)
 		if not payload:
 			return None
 		try:
-			text = payload["choices"][0]["message"]["content"]
+			return payload["choices"][0]["message"]["content"]
 		except (KeyError, IndexError, TypeError):
 			_warn("openai response shape unexpected")
 			return None
-		return parse_response(text)
+
+	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+		text = self._chat(_SYSTEM_PROMPT, build_user_message(inputs))
+		return parse_response(text) if text is not None else None
+
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
+		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
+		return parse_weekly_response(text) if text is not None else None
 
 
 @dataclass
@@ -463,27 +609,34 @@ class OllamaNarrator:
 	host: str = "http://localhost:11434"
 	timeout: float = _OLLAMA_TIMEOUT_SEC
 
-	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+	def _chat(self, system: str, user: str, *, max_tokens: int = 1024) -> str | None:
 		body = {
 			"model": self.model,
 			"messages": [
-				{"role": "system", "content": _SYSTEM_PROMPT},
-				{"role": "user", "content": build_user_message(inputs)},
+				{"role": "system", "content": system},
+				{"role": "user", "content": user},
 			],
 			"stream": False,
 			"format": "json",
-			"options": {"num_predict": 1024},
+			"options": {"num_predict": max_tokens},
 		}
 		url = f"{self.host.rstrip('/')}/api/chat"
 		payload = _post_json(url, {}, body, self.timeout)
 		if not payload:
 			return None
 		try:
-			text = payload["message"]["content"]
+			return payload["message"]["content"]
 		except (KeyError, TypeError):
 			_warn("ollama response shape unexpected")
 			return None
-		return parse_response(text)
+
+	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+		text = self._chat(_SYSTEM_PROMPT, build_user_message(inputs))
+		return parse_response(text) if text is not None else None
+
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
+		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
+		return parse_weekly_response(text) if text is not None else None
 
 
 @dataclass
@@ -491,6 +644,9 @@ class DisabledNarrator:
 	"""Always returns None. Caller falls back to deterministic synthesis."""
 
 	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None:
+		return None
+
+	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
 		return None
 
 

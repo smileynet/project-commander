@@ -324,3 +324,170 @@ def _dummy_inputs() -> narrative.NarrativeInputs:
 		recent_prompts=(),
 		last_active=_now(),
 	)
+
+
+
+# ─── weekly narrator ─────────────────────────────────────────────────────────
+
+def _dummy_weekly() -> narrative.WeeklyInputs:
+	return narrative.WeeklyInputs(
+		since_date="2026-04-19",
+		now_date="2026-04-26",
+		since_days=7,
+		active_projects=4,
+		total_commits=12,
+		total_prompts=6,
+		attention=(("alpha", "Commit 3 uncommitted file(s)", "Working tree dirty"),),
+		new_this_week=(("beta", "", "Initial scaffold landed"),),
+		moved_this_week=(
+			("gamma", "", "Recent commits focused on auth refactor"),
+			("delta", "", "Quiet activity"),
+		),
+	)
+
+
+def test_build_weekly_message_includes_buckets_and_totals():
+	msg = narrative.build_weekly_message(_dummy_weekly())
+	assert "# Weekly review" in msg
+	assert "Window: 2026-04-19 to 2026-04-26" in msg
+	assert "4 active project(s)" in msg
+	assert "12 commit(s)" in msg
+	assert "## Needs your attention" in msg
+	assert "## New this week" in msg
+	assert "## Moved this week" in msg
+	assert "alpha" in msg and "beta" in msg and "gamma" in msg
+
+
+def test_build_weekly_message_marks_empty_buckets():
+	inputs = narrative.WeeklyInputs(
+		since_date="2026-04-19", now_date="2026-04-26", since_days=7,
+		active_projects=0, total_commits=0, total_prompts=0,
+	)
+	msg = narrative.build_weekly_message(inputs)
+	assert msg.count("(empty)") == 3
+
+
+def test_parse_weekly_response_accepts_valid_json():
+	body = '{"week_in_review": "This week you shipped two features and stalled on auth."}'
+	out = narrative.parse_weekly_response(body)
+	assert out is not None
+	assert out.week_in_review.startswith("This week")
+
+
+def test_parse_weekly_response_rejects_too_short():
+	assert narrative.parse_weekly_response('{"week_in_review": "hi"}') is None
+
+
+def test_parse_weekly_response_rejects_malformed():
+	assert narrative.parse_weekly_response("not json") is None
+	assert narrative.parse_weekly_response('{"other": "stuff"}') is None
+
+
+def test_parse_weekly_response_strips_code_fence():
+	body = '```json\n{"week_in_review": "A week of incremental progress on auth."}\n```'
+	out = narrative.parse_weekly_response(body)
+	assert out is not None
+	assert "incremental" in out.week_in_review
+
+
+def test_anthropic_narrator_weekly_round_trip(monkeypatch):
+	good = '{"week_in_review": "You shipped on alpha; gamma kept moving on auth."}'
+	monkeypatch.setattr(narrative, "_post_json",
+	                    lambda *a, **k: {"content": [{"type": "text", "text": good}]})
+	n = narrative.AnthropicNarrator(api_key="k")
+	out = n.narrate_weekly(_dummy_weekly())
+	assert out is not None
+	assert "alpha" in out.week_in_review
+
+
+def test_openai_narrator_weekly_round_trip(monkeypatch):
+	good = '{"week_in_review": "You shipped on alpha; gamma kept moving on auth."}'
+	monkeypatch.setattr(narrative, "_post_json",
+	                    lambda *a, **k: {"choices": [{"message": {"content": good}}]})
+	n = narrative.OpenAINarrator(api_key="k")
+	out = n.narrate_weekly(_dummy_weekly())
+	assert out is not None
+	assert "gamma" in out.week_in_review
+
+
+def test_ollama_narrator_weekly_round_trip(monkeypatch):
+	good = '{"week_in_review": "You shipped on alpha; gamma kept moving on auth."}'
+	monkeypatch.setattr(narrative, "_post_json",
+	                    lambda *a, **k: {"message": {"content": good}})
+	n = narrative.OllamaNarrator()
+	out = n.narrate_weekly(_dummy_weekly())
+	assert out is not None
+	assert "shipped" in out.week_in_review
+
+
+def test_disabled_narrator_weekly_returns_none():
+	assert narrative.DisabledNarrator().narrate_weekly(_dummy_weekly()) is None
+
+
+def test_anthropic_narrator_weekly_failsoft_on_http_error(monkeypatch):
+	monkeypatch.setattr(narrative, "_post_json", lambda *a, **k: None)
+	n = narrative.AnthropicNarrator(api_key="k")
+	assert n.narrate_weekly(_dummy_weekly()) is None
+
+
+def test_cached_narrator_weekly_reuses_disk_cache(tmp_path: Path):
+	cache_dir = tmp_path / "cache"
+	cache_dir.mkdir()
+	good = narrative.WeeklyOutput(week_in_review="This week saw shipped progress on auth and tests.")
+
+	class _W:
+		def __init__(self): self.calls = 0
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs):
+			self.calls += 1
+			return good
+
+	inner = _W()
+	cached = narrative.CachedNarrator(inner=inner, model="test-model", root=cache_dir)
+	inputs = _dummy_weekly()
+	out1 = cached.narrate_weekly(inputs)
+	out2 = cached.narrate_weekly(inputs)
+	assert out1 == out2 == good
+	assert inner.calls == 1   # cache hit on the second call
+
+
+def test_cached_narrator_weekly_invalidates_when_inputs_change(tmp_path: Path):
+	cache_dir = tmp_path / "cache"
+	cache_dir.mkdir()
+	good = narrative.WeeklyOutput(week_in_review="This week saw shipped progress on auth and tests.")
+
+	class _W:
+		def __init__(self): self.calls = 0
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs):
+			self.calls += 1
+			return good
+
+	inner = _W()
+	cached = narrative.CachedNarrator(inner=inner, model="test-model", root=cache_dir)
+	cached.narrate_weekly(_dummy_weekly())
+	# Different totals -> different prompt -> different cache key
+	different = narrative.WeeklyInputs(
+		since_date="2026-04-19", now_date="2026-04-26", since_days=7,
+		active_projects=99, total_commits=999, total_prompts=99,
+	)
+	cached.narrate_weekly(different)
+	assert inner.calls == 2
+
+
+def test_cached_narrator_weekly_does_not_cache_failure(tmp_path: Path):
+	cache_dir = tmp_path / "cache"
+	cache_dir.mkdir()
+
+	class _Null:
+		def __init__(self): self.calls = 0
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs):
+			self.calls += 1
+			return None
+
+	inner = _Null()
+	cached = narrative.CachedNarrator(inner=inner, model="test-model", root=cache_dir)
+	cached.narrate_weekly(_dummy_weekly())
+	cached.narrate_weekly(_dummy_weekly())
+	assert inner.calls == 2  # both calls hit the inner provider
