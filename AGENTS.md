@@ -270,6 +270,181 @@ consider whether what you really want is the full report.
   follow, so nothing happens during preview.
 
 
+## Narrative module (`src/project_commander/narrative.py`)
+
+Optional LLM augmentation for three prose surfaces: the detail card's
+*What is it / What's been happening / What's planned next* sections,
+the weekly review's *Week in review* recap paragraph, and the recap
+subcommand's per-project paragraphs. Everything else (status header,
+*Where it stands*, Inspect footer, weekly triage table, all subcommand
+JSON output) stays deterministic.
+
+### Provider abstraction
+
+Single protocol with two methods:
+
+```python
+class Narrator(Protocol):
+    def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None: ...
+    def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None: ...
+```
+
+Three provider impls reach external services over `urllib` (no new
+dependencies). Each shares a `_chat(system, user, *, max_tokens)`
+helper so the public methods only differ in prompt + parser:
+
+| Provider | Trigger | Default model | Endpoint |
+|---|---|---|---|
+| `AnthropicNarrator` | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-latest` | `POST https://api.anthropic.com/v1/messages` |
+| `OpenAINarrator` | `OPENAI_API_KEY` | `gpt-4o-mini` | `POST https://api.openai.com/v1/chat/completions` (with `response_format: json_object`) |
+| `OllamaNarrator` | `OLLAMA_HOST` reachable | `llama3.1` | `POST <host>/api/chat` (with `format: json`, 120s timeout) |
+| `DisabledNarrator` | otherwise | --- | (no call) |
+
+Auto-detect order in `make_narrator`: anthropic > openai > ollama >
+disabled. Override via `--llm-provider` / `--llm-model` flags or
+`PROJECT_COMMANDER_LLM` / `PROJECT_COMMANDER_LLM_MODEL` env vars.
+
+### Prompt contract
+
+Per-project (`narrate`) input is one user message carrying capped
+excerpts:
+
+- Identity: up to 2 of `README.md` / `AGENTS.md` / `CLAUDE.md` /
+  `GEMINI.md` (in that priority order), 600 chars each.
+- Plan: first hit of `PLAN.md` / `ROADMAP.md` / `NEXT_STEPS.md` /
+  `IMPROVEMENTS.md` / `TODO.md` (in that priority order), 1000 chars.
+- Recent commits: 30 most recent subjects with dates.
+- Recent substantive prompts: 15 most recent subjects with dates and
+  source (procedural one-word approvals are filtered out by
+  `is_procedural` before sending).
+- Branch state: branch, dirty/uncommitted count, ahead/behind
+  upstream, last activity timestamp.
+
+Total per-project input: roughly 1500-2000 tokens.
+
+Weekly (`narrate_weekly`) input is the aggregated triage data --- the
+same shape the deterministic `render_review_markdown` produces ---
+with totals (active projects, commits, substantive prompts), window
+dates, and the three buckets (top 8 each as `(name, action, outcome)`
+triples).
+
+Both system prompts enforce: plain prose, no marketing language,
+distinguish shipped from attempted, never invent project names or
+outcomes. Output is strict JSON:
+
+```
+  narrate         {"what_it_is": "...", "whats_been_happening": "...", "whats_planned": "..."}
+  narrate_weekly  {"week_in_review": "..."}
+```
+
+### Cache
+
+`CachedNarrator` wraps any provider with a content-addressed JSON
+cache under `$XDG_CACHE_HOME/project-commander/narrative/` (typically
+`~/.cache/`).
+
+Cache key:
+
+```
+  per-project:  SHA-256(model_id + "\n--\n" + build_user_message(inputs))
+  weekly:       SHA-256(model_id + "::weekly" + "\n--\n" + build_weekly_message(inputs))
+```
+
+Two namespaces, one root directory. Any change to a project's
+commits / prompts / docs --- or to the model id --- yields a different
+key, so stale entries are simply never hit. There is no TTL.
+Failure outputs are *not* cached: a transient API error never
+poisons future runs.
+
+### Fail-soft layers
+
+Narration must never break a report. Three failure paths all return
+`None` and trigger the deterministic fallback:
+
+1. No provider configured (`DisabledNarrator`).
+2. Provider call raises (timeout, 4xx, 5xx, malformed transport)
+   --- caught in `_post_json`. Errors logged to stderr only when
+   `PROJECT_COMMANDER_LLM_VERBOSE=1`.
+3. Output JSON malformed, missing keys, or trivially short
+   (`is_usable()` rejects fields < 8 chars for `narrate`, `< 16` for
+   `narrate_weekly`).
+
+When narration *is* used, the Inspect footer prepends
+`_synthesized prose_` so the user knows the body was LLM-generated
+and can rerun with `--no-llm` to compare.
+
+### Where the narrator runs
+
+Wired in `cli._run_report`, `recap.run`, and the `render_detail*` /
+`render_review*` helpers in `report.py`. Default-on where the
+marginal value is high:
+
+| Surface | LLM call count | Default |
+|---|---|---|
+| `report --project NAME` | 1 per project (cached) | on |
+| `report --since N` (N ≤ 30) | 1 per invocation, not per project | on |
+| `recap` | 1 per project (cached) | on |
+| `report` (fleet table), `report --since` >30 | --- | off |
+| `tidy` / `verify` / `audit` / `catchup` | --- | off (state, not narrative) |
+
+Pass `--no-llm` anywhere to force deterministic synthesis.
+
+### Adding a new provider
+
+1. Create a `@dataclass` provider class with `_chat(system, user,
+   *, max_tokens) -> str | None`.
+2. Add `narrate(self, inputs)` and `narrate_weekly(self, inputs)`
+   that build the right user message and parse the response (or
+   reuse the shared `parse_response` / `parse_weekly_response`
+   helpers).
+3. Wire into `make_narrator` with an env-var trigger and a default
+   model.
+4. Add a CLI choice in `cli._add_common_scan_args` (`--llm-provider`).
+5. Add a smoke test in `tests/test_narrative.py` mocking
+   `_post_json` so the test never hits the network.
+
+## Adding a new subcommand
+
+Subcommands beyond `report` and `tidy` (catchup, verify, audit, recap)
+follow a consistent pattern:
+
+1. Create `src/project_commander/<name>.py` with:
+   - One or more dataclasses for output rows (`@dataclass(frozen=True)`).
+   - A pure entry function (e.g. `synthesize`, `classify`, `verify_one`)
+     that takes `ProjectReport` + an `Observations` view and returns
+     structured output. Pure means same inputs → same output, no
+     subprocesses, no I/O.
+   - `add_subparser(subparsers)` that registers the command and calls
+     `cli._add_common_scan_args(parser)` for shared flags.
+   - `run(args)` that calls `cli.build_reports(args, *,
+     git_recent_commits=N)` and dispatches to the renderer.
+
+2. Wire the subparser in `cli.main`:
+   ```python
+   from . import <name>
+   <name>.add_subparser(sub)
+   ```
+
+3. If your subcommand needs more git history than the default 50
+   commits/project (e.g. `audit` uses 200, `recap` uses 500), pass
+   `git_recent_commits=N` to `build_reports`.
+
+4. If your subcommand needs persistent state across runs (cursors,
+   caches), use `$XDG_STATE_HOME` / `$XDG_CACHE_HOME` with the
+   `project-commander/` namespace. Catchup is the example.
+
+5. Add `tests/test_<name>.py`:
+   - Pure-logic tests that build synthetic `ProjectReport`s and assert
+     on the entry function's structured output.
+   - Renderer tests on the JSON / markdown / terminal forms.
+   - End-to-end tests on `run(args)` only when the integration is the
+     point.
+
+6. If you add a new `SignalKind` along the way, that's a model change
+   --- update `models.SignalKind`, every reader that pattern-matches
+   on kinds, and `tests/test_scanners.py`.
+
+
 ## Candidate signal sources
 
 The seven scanners shipped today cover git + the major agent CLIs +
