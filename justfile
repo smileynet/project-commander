@@ -48,9 +48,9 @@ fleet-json:
 # Write fleet + last-7-days reports to reports/ (gitignored).
 report:
 	@mkdir -p reports
-	{{pc}} report --format markdown > reports/all-projects.md
+	{{pc}} report --format markdown > reports/fleet.md
 	{{pc}} report --since 7 --format markdown > reports/last-7-days.md
-	@echo "wrote reports/all-projects.md  reports/last-7-days.md"
+	@echo "wrote reports/fleet.md  reports/last-7-days.md"
 
 # Write a project detail report.  Usage:  just report-detail NAME=foo
 report-detail NAME:
@@ -58,11 +58,13 @@ report-detail NAME:
 	{{pc}} report --project {{NAME}} --format markdown > reports/{{NAME}}.md
 	@echo "wrote reports/{{NAME}}.md"
 
-# Regenerate the full report set used in docs/screenshots.
+# Regenerate the full report set: fleet, weekly, recap, plus the audit/verify/catchup samples.
 publish:
 	@mkdir -p reports
-	{{pc}} report --format markdown > reports/all-projects.md
+	{{pc}} report --format markdown > reports/fleet.md
 	{{pc}} report --since 7 --format markdown > reports/last-7-days.md
+	{{pc}} recap --since 30 --no-llm --format markdown > reports/recap-30d.md
+	{{pc}} catchup --since 1d --no-advance --format markdown > reports/catchup-since-1d.md
 	@echo "wrote reports/"
 
 # ---------- tidy (hygiene actions) ----------
