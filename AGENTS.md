@@ -403,9 +403,118 @@ Pass `--no-llm` anywhere to force deterministic synthesis.
 5. Add a smoke test in `tests/test_narrative.py` mocking
    `_post_json` so the test never hits the network.
 
+## Definition-of-Done module (`src/project_commander/dod.py`)
+
+The `dod` subcommand is the user-defined complement to `verify`. `verify`
+ships five hardcoded closure checks that apply to every project the same
+way; `dod` reads a per-project `DOD.md` checklist and reports progress
+against whatever criteria the project's author wrote.
+
+### File contract
+
+Discovery is case-insensitive over the project root. Recognized names:
+`DOD.md`, `DEFINITION_OF_DONE.md`, `DEFINITION-OF-DONE.md`. `--file PATH`
+overrides the default lookup (only meaningful when the run targets a
+single project via `--project NAME`).
+
+Anything that isn't a `- [ ]` / `- [x]` checkbox line is ignored, so the
+file may carry headings, prose, comments, or grouping --- the parser only
+looks at the checkboxes. Markdown chrome (`**bold**`, `*italic*`,
+`` `code` ``) inside the criterion text is stripped before pattern
+matching.
+
+### Status states
+
+Five outcomes per criterion, mapped onto the user's view of "done":
+
+|State|Meaning|
+|---|---|
+|`PASS`|auto-check matched and passed|
+|`FAIL`|auto-check matched and failed|
+|`DONE`|user marked the source line `[x]` (hand-confirmed)|
+|`MANUAL`|no auto-check pattern matched; awaiting user confirmation|
+|`SKIP`|auto-check matched but is not applicable in this project (e.g. `branch_in_sync` with no upstream configured)|
+
+Roll-up:
+
+	complete    = PASS + DONE
+	outstanding = FAIL + MANUAL
+	progress    = complete / (complete + outstanding)   (SKIP excluded)
+	is_complete = file_exists and outstanding == 0 and total_relevant > 0
+
+Exit code is 1 when any project has outstanding work, 0 otherwise ---
+mirroring `verify` so the same chaining patterns work.
+
+### Auto-check registry
+
+Each entry is a `_Pattern(name, regex, check)` tuple. The first matching
+regex wins, so order matters --- more specific phrasings come first.
+Currently shipped:
+
+|name|matches phrases like|delegates to|
+|---|---|---|
+|`verify_all`|"verify passes", "all verify checks pass"|`verify.verify_one`|
+|`working_tree_clean`|"working tree clean", "no uncommitted", "no dirty"|`verify._check_working_tree`|
+|`branch_in_sync`|"pushed to origin", "in sync with upstream", "no unpushed"|`verify._check_branch_sync`|
+|`branch_is_main`|"on main branch", "branch is master/trunk"|local check|
+|`no_orphan_thread`|"no orphan threads", "every prompt has a follow-up commit"|`verify._check_orphan_thread`|
+|`no_plan_drift`|"no plan-drift", "plan matches reality"|`verify._check_plan_drift`|
+|`plan_complete`|"plan complete", "all phases done", "every checkbox checked"|local check on `PlanDocSummary`|
+|`prompts_substantive`|"substantive prompts", "no procedural-only prompts"|`verify._check_substantive_prompts`|
+
+Patterns are conservative on purpose: an unmatched criterion becomes
+`MANUAL` rather than risk a false `PASS`. False `MANUAL` is recoverable
+(the user adds a pattern, or ticks `[x]`); a false `PASS` is a closure
+lie.
+
+### `[x]` is authoritative
+
+A user-checked line is taken as `DONE` even if its text would otherwise
+match an auto-check that would FAIL. This is by design: the user has
+hand-confirmed something the tool cannot reliably observe, and we don't
+undermine that. Auditors who want the strict view keep items unchecked
+and rely on `PASS`.
+
+### Adding a new auto-check
+
+1. Write `_check_<name>(report) -> CheckResult` returning `PASS` / `FAIL`
+   / `SKIP` with a short `detail` string. Reuse `verify` primitives where
+   possible; only add a fresh check when the closure question is genuinely
+   new.
+2. Append a `_Pattern(name, regex, check)` to `_PATTERNS` in `dod.py`.
+   Order it by specificity --- shorter / more general phrasings go later
+   so a more specific match wins.
+3. Add coverage to `tests/test_dod.py`:
+   - one canonical-phrasing match in `test_match_pattern_recognizes_canonical_phrasings`
+   - one PASS test and one FAIL test (and a SKIP test if the check has a
+     skip path) using `_report` + `evaluate_items`
+4. If the new check needs a signal source that doesn't exist yet (e.g.
+   "tests pass" --- there's no test scanner today), add the scanner first
+   following the rules under [`## Adding a new source`](#adding-a-new-source);
+   pattern matching without a real signal would only ever return `SKIP`.
+
+### Where the subcommand runs
+
+|Surface|Use|
+|---|---|
+|`dod --project NAME`|terminal table for one project: progress bar + criteria with status + Next action|
+|`dod --project NAME --format json`|single-object structured output for agent chaining|
+|`dod`|fleet roll-up: one summary line per project that has a `DOD.md`; projects without are summarized at the bottom|
+|`dod --format markdown`|GFM table per project for `reports/` artifacts|
+
+`dod` does **not** invoke the LLM narrator. The criteria-by-criteria
+status is mechanical and deterministic by design --- a "did you ship?"
+answer that is reproducible turn-to-turn is the entire point of the
+feature.
+
+`DOD.md` itself is **not** picked up by `DocsScanner`. The file is owned
+by the `dod` subcommand alone; treating it as a regular doc signal would
+bleed closure criteria into the identity / planning extraction in
+`observations.py`.
+
 ## Adding a new subcommand
 
-Subcommands beyond `report` and `tidy` (catchup, verify, audit, recap)
+Subcommands beyond `report` and `tidy` (catchup, verify, audit, recap, dod)
 follow a consistent pattern:
 
 1. Create `src/project_commander/<name>.py` with:

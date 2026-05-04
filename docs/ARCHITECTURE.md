@@ -200,19 +200,20 @@ Every subcommand renders the same `Observations` data into a
 different shape:
 
 ```
-                  project-commander
-                         │
-        ┌────────┬───────┼───────┬────────┬────────┐
-        ▼        ▼       ▼       ▼        ▼        ▼
-     report    tidy   catchup  verify   audit    recap
-        │        │       │       │        │        │
-        │        │       │       │        │        │
-   fleet table  init  delta-  PASS/    prompt-  per-period
-   detail card  stale since-  FAIL     →commit  narrative
-   weekly rev.  fetch cursor  json     causality
-                push                   ratios,
-                archive                flags
-   read only    writes  read    read     read     read
+                      project-commander
+                              │
+     ┌────────┬───────┬───────┼──────┬──────┬─────┬──────┐
+     ▼        ▼       ▼       ▼      ▼      ▼     ▼      ▼
+  report    tidy   catchup  verify  dod  audit  recap
+     │        │       │       │      │     │      │
+  fleet    init    delta-  PASS/  DOD.md prompt- per-period
+  detail   stale   since-  FAIL   diff   →commit narrative
+  weekly   fetch   cursor  json   PASS/  ratios,
+           push                   FAIL/  flags
+           archive                DONE/
+                                  MANUAL
+  read     writes  read    read   read   read   read
+  only     +reads  only    only   only   only   only
 ```
 
 | Subcommand | Best for |
@@ -220,7 +221,8 @@ different shape:
 | `report` | Survey. Default fleet table; `--project NAME` opens the 4-question briefing card; `--since N` (N ≤ 30) is the weekly review. |
 | `tidy` | Hygiene. Init missing repos, checkpoint stale dirty trees, optionally fetch/push, optionally archive dormant clean projects with `--prune`. The only writing subcommand. |
 | `catchup` | Deltas since *you* last looked. Persists a cursor; each run reports what changed since the cursor and advances it. |
-| `verify` | Closure checks. Five named PASS/FAIL checks; `--format json` + non-zero exit on FAIL is suitable for agent chaining. |
+| `verify` | Closure checks the *tool* defines. Five named PASS/FAIL checks; `--format json` + non-zero exit on FAIL is suitable for agent chaining. |
+| `dod` | Closure checks *you* define. Reads a per-project `DOD.md` checklist; recognized criteria are auto-evaluated, the rest are surfaced as MANUAL. PASS/FAIL/DONE/MANUAL/SKIP per criterion + a progress percent so an agent can diff perceived state against the goal. |
 | `audit` | Did agent prompts actually convert into landed code? Looks 24h forward from each substantive prompt for a follow-up commit. |
 | `recap` | Per-project retrospective narrative across `--quarter`, `--year`, `--month`, or `--since N`. |
 
@@ -486,6 +488,12 @@ an agent here, not directing it."* Useful as a usage-shape signal.
    # verify --- closure checks suitable for agent chaining
    project-commander verify --project NAME --format json   structured PASS/FAIL
    project-commander verify                                fleet-wide JSON array, exit 1 on any FAIL
+
+   # dod --- user-defined definition of done
+   project-commander dod --project NAME                     terminal table + progress bar
+   project-commander dod --project NAME --format json       structured PASS/FAIL/DONE/MANUAL/SKIP
+   project-commander dod                                    fleet roll-up; only projects with DOD.md
+   project-commander dod --project NAME --file ./done.md    use a non-default checklist file
 
    # audit --- prompt → commit causality
    project-commander audit --project NAME --since 30     ratios, orphans, plan-drift flag

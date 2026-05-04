@@ -118,7 +118,7 @@ else — or in more than one place.
 ## Subcommands
 
 ```sh
-project-commander {report,tidy,catchup,verify,audit,recap}
+project-commander {report,tidy,catchup,verify,audit,recap,dod}
 ```
 
 | Subcommand | Job |
@@ -127,6 +127,7 @@ project-commander {report,tidy,catchup,verify,audit,recap}
 | `tidy` | Apply hygiene actions: init missing repos, checkpoint stale dirty trees, optionally fetch/push, optionally archive dormant clean projects with `--prune`. |
 | `catchup` | Show what changed since you last ran `catchup`. Persists a cursor at `~/.local/state/project-commander/`. Three sections: agent activity while you were away, upstream commits you're behind on, your own work since last check. |
 | `verify` | Five named PASS/FAIL closure checks per project. JSON output with non-zero exit on any FAIL — suitable for agent chaining or pre-handoff gates. |
+| `dod` | Diff perceived state against a per-project `DOD.md` (Definition of Done). Each `- [ ] criterion` is matched against a small registry of auto-checks; recognized items get `PASS`/`FAIL`/`SKIP`, user-`[x]` items become `DONE`, the rest stay `MANUAL` until you tick them. JSON output + non-zero exit when work is outstanding. |
 | `audit` | Prompt-to-commit causality for a project: which substantive prompts converted into landed code, which orphaned, the prompt-to-commit ratio, and flags like `all-orphans` or `plan-drift`. |
 | `recap` | Per-project retrospective narrative across `--quarter`, `--year`, `--month`, or `--since N`. Categorizes activity (shipped / major arc / started but paused / quiet) and synthesizes a paragraph per project. |
 

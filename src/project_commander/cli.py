@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Survey project folders and apply hygiene actions across them.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True,
-                                metavar="{report,tidy,catchup,verify,audit,recap}")
+                                metavar="{report,tidy,catchup,verify,audit,recap,dod}")
 
     rp = sub.add_parser(
         "report",
@@ -214,12 +214,13 @@ def main(argv: list[str] | None = None) -> int:
     _add_report_args(rp)
     rp.set_defaults(func=_run_report)
 
-    from . import tidy, catchup, verify, audit, recap
+    from . import tidy, catchup, verify, audit, recap, dod
     tidy.add_subparser(sub)
     catchup.add_subparser(sub)
     verify.add_subparser(sub)
     audit.add_subparser(sub)
     recap.add_subparser(sub)
+    dod.add_subparser(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)
