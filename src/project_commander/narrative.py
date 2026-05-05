@@ -139,6 +139,7 @@ class DoDInputs:
 	percent: int
 	is_complete: bool
 	next_action: str
+	target: str  # user-observable outcome statement from the DoD's `## Target` section (empty if not set)
 	# (text, status, detail, auto_check, user_checked) per criterion, source order
 	criteria: tuple[tuple[str, str, str, str, bool], ...]
 	# Last few commit subjects so the observer can ground "what's landed" claims
@@ -456,32 +457,49 @@ def parse_weekly_response(text: str) -> WeeklyOutput | None:
 
 
 _DOD_SYSTEM_PROMPT = (
-	"You observe a project's progress against its written Definition of Done. "
-	"You receive: the project's name, its current git state, the criteria list "
-	"(each with status PASS/FAIL/DONE/MANUAL/SKIP and a detail string), the "
-	"single most-blocking next_action the tool picked, and the most recent "
-	"commit subjects.\n"
+	"You observe how close a project is to a stated outcome target. The target "
+	"is a single user-observable outcome the project is trying to deliver. The "
+	"criteria below are how the team is getting there.\n"
 	"\n"
-	"Write one observation, 2-3 plain prose sentences, comparing the current "
-	"state to the defined criteria. The observation goes next to the mechanical "
-	"status table; do not duplicate that table in prose. Instead:\n"
-	"  - Reference specific criteria by their text (e.g. 'session_phases table "
-	"exists', 'BDD tests cover all 7 ACs') when describing where work landed.\n"
-	"  - Distinguish PASS (mechanically verified), DONE (user-confirmed by "
-	"ticking [x]), and MANUAL (awaiting user confirmation) when relevant.\n"
-	"  - Anchor 'what just happened' claims in the recent commit subjects when "
-	"there is a clear connection.\n"
-	"  - If the work is complete, name what shipped concretely. If it is in "
-	"flight, name the specific gap. If it is barely started, say so plainly.\n"
+	"Write one observation, 2-3 plain prose sentences, describing distance "
+	"from the TARGET --- what the user/operator can or cannot do yet, what "
+	"experience is or is not deliverable. Speak in the language the target "
+	"itself uses.\n"
+	"\n"
+	"Examples of the right shape:\n"
+	"  YES: \"Operators can now see workflow phase progression on the dashboard "
+	"with live updates, but the command center still does not show per-project "
+	"phase, so the multi-project overview is not deliverable yet.\"\n"
+	"  NO:  \"AC1 and AC3 are PASS, AC4 is FAIL because command_center.templ has "
+	"not been created.\"\n"
+	"\n"
+	"The mechanical criteria table is rendered separately, below the "
+	"observation. Do not list which criteria passed or failed. Do not name "
+	"file paths. Do not reference AC numbers, test files, or implementation "
+	"language. The reader already sees that table.\n"
+	"\n"
+	"If no target is given, observe the project's distance from completion "
+	"using the criteria text as a fallback, but still in outcome-language "
+	"(\"what the user can do\") rather than implementation-language (\"which "
+	"file exists\").\n"
+	"\n"
+	"Grounding rule (READ THE CRITERIA STATUSES BEFORE WRITING):\n"
+	"  - A user-outcome claim like 'operators can X' is only true when the\n"
+	"    criterion supporting X is PASS or DONE. If it is FAIL or MANUAL,\n"
+	"    the operator CANNOT do X yet --- say 'cannot' or 'not yet'.\n"
+	"  - The percent value tells you the rough shape: 0-25% means almost\n"
+	"    nothing user-facing works; 25-75% means partial delivery; >=90%\n"
+	"    means the full target is essentially deliverable.\n"
+	"  - Do not invent outcomes the criteria statuses do not support.\n"
+	"  - When unsure, lean toward 'cannot yet' rather than 'can'.\n"
 	"\n"
 	"Rules:\n"
 	"  - Plain prose. No bullet lists. No markdown. No headings.\n"
-	"  - Total length <= 80 words.\n"
+	"  - Total length <= 70 words.\n"
 	"  - No marketing language. No filler ('a robust solution', 'comprehensive').\n"
-	"  - Distinguish 'shipped' from 'attempted'. Do not invent criteria or "
-	"outcomes that are not in the inputs.\n"
-	"  - If the inputs are too thin for a defensible observation, write a "
-	"single sentence saying so.\n"
+	"  - Distinguish what works for users from what is broken or absent.\n"
+	"  - If the inputs are too thin for a defensible observation, write one\n"
+	"sentence saying so.\n"
 	"\n"
 	"Output strictly as a JSON object with one string key: "
 	'{"observation": "..."}.'
@@ -490,9 +508,61 @@ _DOD_SYSTEM_PROMPT = (
 
 
 def build_dod_message(inputs: DoDInputs) -> str:
-	"""Render the DoD state as the LLM's user-message body."""
+	"""Render the DoD state as the LLM's user-message body.
+
+	Order is deliberate: the very first thing the model sees, after the
+	project name, is a status summary expressed in plain English so the
+	prose anchors against reality before the model encounters the target's
+	aspirational language. Then the criteria with statuses, then the
+	target as the language to use, then commits as supporting evidence.
+	"""
 	lines: list[str] = []
 	lines.append(f"# Project: {inputs.project_name}")
+	lines.append("")
+
+	# 1. Status summary in plain English. The model reads this first so it
+	#    cannot confabulate a "user can do X" claim that ignores reality.
+	lines.append("## Current shape (read this before writing)")
+	if inputs.is_complete:
+		shape = "The full target is deliverable."
+	elif inputs.percent >= 90:
+		shape = "Nearly there: the target is almost deliverable; only minor gaps remain."
+	elif inputs.percent >= 50:
+		shape = "Partially deliverable: substantial outcomes work, others still don't."
+	elif inputs.percent >= 25:
+		shape = "Early progress: a few outcomes work, most are not yet deliverable."
+	elif inputs.percent > 0:
+		shape = "Barely started: almost no operator-facing outcome works yet."
+	else:
+		shape = "Not started: no operator-facing outcome works yet."
+	pass_count = sum(1 for c in inputs.criteria if c[1] in ("PASS", "DONE"))
+	fail_count = sum(1 for c in inputs.criteria if c[1] == "FAIL")
+	manual_count = sum(1 for c in inputs.criteria if c[1] == "MANUAL")
+	lines.append(shape)
+	lines.append(
+		f"counts: {pass_count} verified working, {fail_count} not built yet, "
+		f"{manual_count} awaiting human sign-off"
+	)
+	lines.append("")
+
+	# 2. Criteria with statuses. The truth source for what works and doesn't.
+	lines.append("## Criteria with current status")
+	lines.append("(the user already sees this as a table; do not enumerate it back)")
+	for text, status, detail, auto_check, user_checked in inputs.criteria:
+		marker = "[x]" if user_checked else "[ ]"
+		lines.append(f"- {marker} {status:<6} {text}")
+	lines.append("")
+
+	# 3. Target. The aspirational language the observation should speak in.
+	if inputs.target:
+		lines.append("## Target outcome (use this language)")
+		lines.append(inputs.target)
+	else:
+		lines.append("## Target outcome")
+		lines.append("(not specified; infer from the criteria, in user-language)")
+	lines.append("")
+
+	# 4. Git state and recent commits as supporting evidence.
 	state_bits = [f"branch: {inputs.branch or '(no branch)'}"]
 	if inputs.dirty:
 		state_bits.append(f"dirty ({inputs.uncommitted_count} uncommitted)")
@@ -501,23 +571,7 @@ def build_dod_message(inputs: DoDInputs) -> str:
 	if inputs.behind:
 		state_bits.append(f"{inputs.behind} commits behind upstream")
 	lines.append("State: " + ", ".join(state_bits))
-	lines.append("")
-
-	lines.append("## Definition of Done progress")
-	lines.append(
-		f"complete: {inputs.complete}/{inputs.total_relevant} "
-		f"({inputs.percent}%)  outstanding: {inputs.outstanding}  "
-		f"skipped: {inputs.skipped}  is_complete: {inputs.is_complete}"
-	)
 	lines.append(f"next_action: {inputs.next_action}")
-	lines.append("")
-
-	lines.append("## Criteria")
-	for text, status, detail, auto_check, user_checked in inputs.criteria:
-		marker = "[x]" if user_checked else "[ ]"
-		auto = f"  auto={auto_check}" if auto_check else ""
-		det = f"  detail={detail}" if detail else ""
-		lines.append(f"- {marker} {status:<6} {text}{auto}{det}")
 	lines.append("")
 
 	lines.append("## Recent commits (most recent first)")

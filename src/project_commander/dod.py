@@ -76,6 +76,7 @@ class DoDResult:
 	criteria: tuple[Criterion, ...]
 	next_action: str = ""
 	observation: str = ""  # optional LLM-narrated state-vs-DoD summary
+	target: str = ""       # user-observable outcome statement from `## Target`
 
 	@property
 	def total_relevant(self) -> int:
@@ -357,25 +358,65 @@ def _strip_md_chrome(text: str) -> str:
 	return text.strip()
 
 
-def parse_dod_file(path: Path) -> list[tuple[str, bool]]:
-	"""Read a DOD file and return `(criterion_text, user_checked)` tuples.
+_TARGET_HEADING_RE = re.compile(r"^\s*##\s+target\s*$", re.IGNORECASE)
+_HEADING_RE = re.compile(r"^\s*#")
+_TARGET_PREFIX_RE = re.compile(
+	r"^\s*\*?\*?(?:when\s+(?:this\s+is\s+)?done|target|outcome|goal)\*?\*?\s*[:\-]\s*",
+	re.IGNORECASE,
+)
 
-	Lines that are not checkbox items are ignored — the rest of the file
-	can be free-form prose, headings, comments, whatever the author likes.
+
+def _extract_target(lines: list[str]) -> str:
+	"""Return the prose body of the `## Target` section, if any.
+
+	Captures everything between `## Target` and the next heading, stripping
+	markdown chrome and an optional leading `When done:` / `Target:` prefix
+	so the output reads as plain outcome prose.
+	"""
+	in_target = False
+	body: list[str] = []
+	for raw in lines:
+		if _TARGET_HEADING_RE.match(raw):
+			in_target = True
+			continue
+		if in_target and _HEADING_RE.match(raw) and not _TARGET_HEADING_RE.match(raw):
+			break
+		if in_target:
+			body.append(raw)
+	if not body:
+		return ""
+	# Collapse to a single paragraph; markdown chrome stays minimal.
+	flat = " ".join(line.strip() for line in body if line.strip())
+	flat = _strip_md_chrome(flat)
+	flat = _TARGET_PREFIX_RE.sub("", flat)
+	return flat.strip()
+
+
+def parse_dod_file(path: Path) -> tuple[str, list[tuple[str, bool]]]:
+	"""Read a DOD file and return `(target, items)`.
+
+	`target` is the prose body of an optional `## Target` section --- a
+	single user-observable outcome statement the criteria support. `items`
+	is the same `(criterion_text, user_checked)` tuple list the previous
+	signature returned. Lines that are not checkbox items or part of the
+	target section are ignored --- the rest of the file can be free-form
+	prose, headings, comments, whatever the author likes.
 	"""
 	try:
 		text = path.read_text(errors="replace")
 	except OSError:
-		return []
+		return "", []
+	lines = text.splitlines()
+	target = _extract_target(lines)
 	items: list[tuple[str, bool]] = []
-	for line in text.splitlines():
+	for line in lines:
 		m = _CHECKBOX_RE.match(line)
 		if not m:
 			continue
 		raw = m.group("text")
 		mark = m.group("mark").lower()
 		items.append((_strip_md_chrome(raw), mark == "x"))
-	return items
+	return target, items
 
 
 # ───── evaluation ────────────────────────────────────────────────────────────
@@ -459,7 +500,7 @@ def evaluate(report: ProjectReport, *,
 			next_action=("Write a DOD.md at the project root with `- [ ] criterion` "
 			             "items to start tracking definition of done."),
 		)
-	items = parse_dod_file(dod_path)
+	target, items = parse_dod_file(dod_path)
 	criteria = tuple(evaluate_items(report, items))
 	try:
 		rel = dod_path.relative_to(report.path)
@@ -472,16 +513,18 @@ def evaluate(report: ProjectReport, *,
 	else:
 		next_action = _next_action(criteria)
 
-	observation = _maybe_observe(report, criteria, next_action, narrator) if items else ""
+	observation = (_maybe_observe(report, target, criteria, next_action, narrator)
+	               if items else "")
 
 	return DoDResult(
 		project=report.name, file_path=rel_str, file_exists=True,
 		criteria=criteria, next_action=next_action,
-		observation=observation,
+		observation=observation, target=target,
 	)
 
 
 def _maybe_observe(report: ProjectReport,
+                   target: str,
                    criteria: tuple[Criterion, ...],
                    next_action: str,
                    narrator) -> str:
@@ -516,6 +559,7 @@ def _maybe_observe(report: ProjectReport,
 		percent=percent,
 		is_complete=(outstanding == 0 and total_relevant > 0),
 		next_action=next_action,
+		target=target,
 		criteria=tuple(
 			(c.text, c.status, c.detail, c.auto_check, c.user_checked)
 			for c in criteria
@@ -578,6 +622,9 @@ def render_terminal(result: DoDResult, console: Console) -> None:
 	console.print(f"[bold cyan]{result.project}[/bold cyan]  "
 	              f"[bold {header_color}]DoD {verdict}[/bold {header_color}]  "
 	              f"[dim]{result.file_path}[/dim]")
+	if result.target:
+		console.print()
+		console.print(f"  [bold]Target:[/bold] {_rich_escape(result.target)}")
 	console.print()
 	console.print(f"  {bar}  [bold]{result.complete}/{result.total_relevant}[/bold]"
 	              f"  [dim]({pct}%)[/dim]{skipped}")
@@ -665,6 +712,7 @@ def render_json(results: list[DoDResult] | DoDResult) -> str:
 				for c in r.criteria
 			],
 			"observation": r.observation,
+			"target": r.target,
 		}
 	if isinstance(results, DoDResult):
 		return json.dumps(to_dict(results), indent=2)
@@ -685,6 +733,9 @@ def render_markdown(results: list[DoDResult] | DoDResult) -> str:
 		verdict = "DONE" if r.is_complete else "OPEN"
 		lines.append(f"**Status:** {verdict} \u00b7 {r.complete}/{r.total_relevant} "
 		             f"({r.percent}%) \u00b7 source: `{r.file_path}`")
+		if r.target:
+			lines.append(f"**Target:** {r.target}")
+			lines.append("")
 		lines.append("")
 		lines.append("| Status | Criterion | Detail |")
 		lines.append("|---|---|---|")

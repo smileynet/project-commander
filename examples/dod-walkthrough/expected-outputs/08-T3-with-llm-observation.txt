@@ -1,26 +1,34 @@
 
 line-cook-web  DoD OPEN  DOD.md
 
+  Target: When this epic is done, an operator monitoring a Line Cook session 
+sees the active workflow phase (PREP → COOK → SERVE → TIDY) at a glance on the 
+dashboard, with live updates as phases transition. The command center shows the 
+current phase per project. Demo mode supports exploration without a real 
+session, and dashboard restart preserves phase state.
+
   [██████████████░░░░░░░░░░]  9/16  (56%)
 
-  [  PASS]  AC1 stepper component: file 
-internal/web/templates/workflow_progress.templ exists  found at 
+  [  PASS]  Operators see workflow phase progression on the dashboard 
+(internal/web/templates/workflow_progress.templ exists)  found at 
 internal/web/templates/workflow_progress.templ
-  [  PASS]  AC2/AC3 phase detection logic: file internal/workflow/detect.go 
-exists  found at internal/workflow/detect.go
-  [  PASS]  AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists 
-found at internal/workflow/tracker.go
-  [  PASS]  AC4 command center badge: file 
-internal/web/templates/command_center.templ exists  found at 
+  [  PASS]  The dashboard knows when phases transition 
+(internal/workflow/detect.go exists)  found at internal/workflow/detect.go
+  [  PASS]  Phase transitions broadcast live to the dashboard 
+(internal/workflow/tracker.go exists)  found at internal/workflow/tracker.go
+  [  PASS]  The command center shows current phase per project 
+(internal/web/templates/command_center.templ exists)  found at 
 internal/web/templates/command_center.templ
-  [  PASS]  AC6 persistence layer: file internal/db/session_phases.go exists  
-found at internal/db/session_phases.go
-  [  FAIL]  AC7 demo mode data: file internal/demo/workflow.go exists  not 
-found: internal/demo/workflow.go
-  [  PASS]  BDD test coverage: file tests/e2e/workflow_progress_test.go exists  
-found at tests/e2e/workflow_progress_test.go
-  [  FAIL]  Acceptance doc published at docs/features/demo-4o4-acceptance.md  
-not found: docs/features/demo-4o4-acceptance.md
+  [  PASS]  Phase state survives a dashboard restart 
+(internal/db/session_phases.go exists)  found at internal/db/session_phases.go
+  [  FAIL]  Operators can explore the dashboard without a live session 
+(internal/demo/workflow.go exists)  not found: internal/demo/workflow.go
+  [  PASS]  BDD coverage proves the operator-facing behavior 
+(tests/e2e/workflow_progress_test.go exists)  found at 
+tests/e2e/workflow_progress_test.go
+  [  FAIL]  The epic is signed off and documented 
+(docs/features/demo-4o4-acceptance.md exists)  not found: 
+docs/features/demo-4o4-acceptance.md
   [  PASS]  Working tree clean
   [  PASS]  Pushed to origin  at parity with origin/main
   [  FAIL]  All plan phases complete  2 unchecked item(s), 1 open phase(s)
@@ -34,8 +42,10 @@ when you confirm by hand
   [MANUAL]  All 7 ACs verified end-to-end in browser  no auto-check matched; 
 mark `[x]` when you confirm by hand
 
-  Next: Address `AC7 demo mode data: file internal/demo/workflow.go exists`: not
-found: internal/demo/workflow.go
+  Next: Address `Operators can explore the dashboard without a live session 
+(internal/demo/workflow.go exists)`: not found: internal/demo/workflow.go
 
-  Observation: AC7 demo mode data is missing as `internal/demo/workflow.go` was 
-not found, blocking further progress.
+  Observation: Operators can see the active workflow phase (PREP → COOK → SERVE 
+→ TIDY) on the dashboard with live updates, but cannot explore the dashboard 
+without a real session in demo mode, so full exploration functionality is not 
+yet deliverable.

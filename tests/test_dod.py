@@ -98,7 +98,8 @@ def test_parse_dod_file_extracts_checkboxes(tmp_path: Path):
 		"\n"
 		"Not a checkbox: just a line.\n"
 	)
-	items = parse_dod_file(p)
+	target, items = parse_dod_file(p)
+	assert target == ""
 	assert items == [
 		("Working tree clean", False),
 		("README updated", True),
@@ -114,7 +115,8 @@ def test_parse_dod_file_strips_markdown_chrome(tmp_path: Path):
 		"- [ ] *no* dirty files\n"
 		"- [ ] `verify passes`\n"
 	)
-	items = parse_dod_file(p)
+	target, items = parse_dod_file(p)
+	assert target == ""
 	assert [t for t, _ in items] == [
 		"Working tree is clean",
 		"no dirty files",
@@ -123,7 +125,7 @@ def test_parse_dod_file_strips_markdown_chrome(tmp_path: Path):
 
 
 def test_parse_dod_file_missing_returns_empty(tmp_path: Path):
-	assert parse_dod_file(tmp_path / "nope.md") == []
+	assert parse_dod_file(tmp_path / "nope.md") == ("", [])
 
 
 # ───── pattern registry ──────────────────────────────────────────────────────
@@ -253,6 +255,197 @@ def test_file_exists_rejects_explicit_escape(tmp_path: Path):
 	cr = _check_file_exists(r, path="../etc/passwd")
 	assert cr.status == "SKIP"
 	assert "escapes project root" in cr.detail
+
+
+# ───── target parsing + rendering ────────────────────────────────────────────
+
+def test_target_section_parsed_into_prose(tmp_path: Path):
+	p = tmp_path / "DOD.md"
+	p.write_text(
+		"# Definition of Done\n"
+		"\n"
+		"## Target\n"
+		"An operator can see workflow phase progression on the dashboard.\n"
+		"\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	target, items = parse_dod_file(p)
+	assert target == "An operator can see workflow phase progression on the dashboard."
+	assert len(items) == 1
+
+
+def test_target_section_strips_leading_prefix(tmp_path: Path):
+	# Optional `Target:` / `When done:` / `Outcome:` prefix is stripped.
+	p = tmp_path / "DOD.md"
+	p.write_text(
+		"## Target\n"
+		"When done: dashboards live-update phase transitions in <1 second.\n"
+	)
+	target, _ = parse_dod_file(p)
+	assert target == "dashboards live-update phase transitions in <1 second."
+
+
+def test_target_section_collapses_multiline_paragraph(tmp_path: Path):
+	p = tmp_path / "DOD.md"
+	p.write_text(
+		"## Target\n"
+		"Operators see PREP -> COOK -> SERVE -> TIDY at a glance.\n"
+		"Live updates via SSE; demo mode for exploration.\n"
+		"\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	target, _ = parse_dod_file(p)
+	assert "Operators see PREP" in target
+	assert "Live updates via SSE" in target
+	# No newlines should remain after collapse.
+	assert "\n" not in target
+
+
+def test_target_absent_yields_empty_string(tmp_path: Path):
+	p = tmp_path / "DOD.md"
+	p.write_text(
+		"# Definition of Done\n"
+		"- [ ] Working tree clean\n"
+	)
+	target, _ = parse_dod_file(p)
+	assert target == ""
+
+
+def test_dodresult_carries_target(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text(
+		"## Target\n"
+		"Users can do the thing.\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	result = evaluate(r)
+	assert result.target == "Users can do the thing."
+
+
+def test_target_in_json_output(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text(
+		"## Target\n"
+		"Users can do the thing.\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	doc = json.loads(render_json(evaluate(r)))
+	assert doc["target"] == "Users can do the thing."
+
+
+def test_target_in_markdown_output(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text(
+		"## Target\n"
+		"Users can do the thing.\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	out = render_markdown(evaluate(r))
+	assert "**Target:** Users can do the thing." in out
+
+
+def test_target_passed_to_narrator(tmp_path: Path):
+	"""The narrator receives the target on DoDInputs.target."""
+	from project_commander.narrative import DoDOutput
+
+	captured = {}
+
+	class _Capture:
+		def narrate_dod(self, inputs):
+			captured["target"] = inputs.target
+			return DoDOutput(observation="ok ok ok ok ok ok ok ok ok")
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs): return None
+
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text(
+		"## Target\n"
+		"Operators see workflow phase progression.\n"
+		"## Criteria\n"
+		"- [ ] Working tree clean\n"
+	)
+	evaluate(r, narrator=_Capture())
+	assert captured["target"] == "Operators see workflow phase progression."
+
+
+# ───── outcome-language prompt shape ─────────────────────────────────────────
+
+def test_dod_system_prompt_emphasizes_outcome_distance():
+	"""The system prompt must instruct outcome-distance, not criteria coverage.
+
+	This is a regression guard for the rewrite: if a future change reverts
+	the prompt to the old criteria-enumeration shape, this test fails.
+	"""
+	from project_commander.narrative import _DOD_SYSTEM_PROMPT
+	# Must instruct outcome-distance language.
+	assert "TARGET" in _DOD_SYSTEM_PROMPT
+	assert "user-observable" in _DOD_SYSTEM_PROMPT.lower() \
+	       or "user/operator" in _DOD_SYSTEM_PROMPT.lower()
+	# Must explicitly forbid the implementation-language anti-pattern.
+	# Several distinct forbiddings are acceptable; require at least one
+	# of these phrases to be present.
+	forbidden_one_of = (
+		"Do not name file paths",
+		"Do not list which criteria",
+		"do not enumerate",
+	)
+	assert any(p in _DOD_SYSTEM_PROMPT for p in forbidden_one_of), (
+		"system prompt must explicitly forbid criteria/file enumeration"
+	)
+	# Must NOT instruct the model to reference criteria text by name.
+	assert "Reference specific criteria by their text" not in _DOD_SYSTEM_PROMPT
+
+
+def test_build_dod_message_grounds_status_before_target():
+	"""The message must put status grounding before the target prose.
+
+	The deliberate order is:
+	  1. Current shape (plain English status: 'partially deliverable' etc.)
+	  2. Criteria with statuses (the truth source)
+	  3. Target (the language to use, but NOT before grounding)
+
+	This is the regression guard for the prompt rewrite: if a future change
+	moves the target above the status block, the model will tend to
+	confabulate user-outcome claims that ignore the criteria.
+	"""
+	from project_commander.narrative import DoDInputs, build_dod_message
+	inputs = DoDInputs(
+		project_name="x", branch="main", dirty=False, uncommitted_count=0,
+		ahead=0, behind=0, complete=1, outstanding=0, skipped=0,
+		total_relevant=1, percent=100, is_complete=True,
+		next_action="Done.", target="Users do the thing.",
+		criteria=(("Working tree clean", "PASS", "", "working_tree_clean", False),),
+		recent_commits=(),
+	)
+	body = build_dod_message(inputs)
+	shape_idx = body.find("Current shape")
+	criteria_idx = body.find("Working tree clean")
+	target_idx = body.find("Users do the thing.")
+	assert shape_idx != -1, "status shape summary must appear"
+	assert criteria_idx != -1, "criteria must appear"
+	assert target_idx != -1, "target must appear"
+	assert shape_idx < criteria_idx, "shape summary must come before criteria"
+	assert criteria_idx < target_idx, "criteria status must come before target"
+
+
+def test_build_dod_message_handles_missing_target():
+	"""When target is empty, the prompt explicitly notes 'not specified'."""
+	from project_commander.narrative import DoDInputs, build_dod_message
+	inputs = DoDInputs(
+		project_name="x", branch="main", dirty=False, uncommitted_count=0,
+		ahead=0, behind=0, complete=0, outstanding=1, skipped=0,
+		total_relevant=1, percent=0, is_complete=False,
+		next_action="Address X.", target="",
+		criteria=(("X", "FAIL", "", "", False),),
+		recent_commits=(),
+	)
+	body = build_dod_message(inputs)
+	assert "not specified" in body
 
 
 # ───── narrator wiring ───────────────────────────────────────────────────────

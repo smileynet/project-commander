@@ -119,30 +119,33 @@ git -C "$PROJECT" add README.md
 git -C "$PROJECT" commit -q -m "initial scaffold"
 git -C "$PROJECT" push -q -u origin main
 
-# Definition of Done, written up front. Each AC criterion is anchored
-# to the file artifact that proves it shipped — the `file_exists`
-# auto-check pattern in dod.py resolves them automatically as the
-# implementation lands.
+# Definition of Done, written up front. The `## Target` section names the
+# user-observable outcome the criteria support; each criterion is phrased
+# in outcome-first language with a parenthetical file-anchor so the
+# `file_exists` auto-check still resolves it. Mechanical hygiene and
+# human sign-offs follow as backdrop.
 cat > "$PROJECT/DOD.md" <<'DOD'
-# Definition of Done — Phase 4: Workflow Progress Indicators
+# Definition of Done — demo-4o4
 
-Closure criteria for the `demo-4o4` epic. Each AC is anchored to the
-file artifact that ships it; mechanical hygiene and human sign-offs
-follow. Drives to all-green before the epic is plate-able.
+## Target
 
-Source spec: `docs/planning/context-workflow-progress/`
-Final acceptance lands at: `docs/features/demo-4o4-acceptance.md`
+When this epic is done, an operator monitoring a Line Cook session sees
+the active workflow phase (PREP → COOK → SERVE → TIDY) at a glance on
+the dashboard, with live updates as phases transition. The command
+center shows the current phase per project. Demo mode supports
+exploration without a real session, and dashboard restart preserves
+phase state.
 
-## Acceptance criteria (7 ACs from the spec)
+## What ships when this is done
 
-- [ ] AC1 stepper component: file internal/web/templates/workflow_progress.templ exists
-- [ ] AC2/AC3 phase detection logic: file internal/workflow/detect.go exists
-- [ ] AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists
-- [ ] AC4 command center badge: file internal/web/templates/command_center.templ exists
-- [ ] AC6 persistence layer: file internal/db/session_phases.go exists
-- [ ] AC7 demo mode data: file internal/demo/workflow.go exists
-- [ ] BDD test coverage: file tests/e2e/workflow_progress_test.go exists
-- [ ] Acceptance doc published at docs/features/demo-4o4-acceptance.md
+- [ ] Operators see workflow phase progression on the dashboard (internal/web/templates/workflow_progress.templ exists)
+- [ ] The dashboard knows when phases transition (internal/workflow/detect.go exists)
+- [ ] Phase transitions broadcast live to the dashboard (internal/workflow/tracker.go exists)
+- [ ] The command center shows current phase per project (internal/web/templates/command_center.templ exists)
+- [ ] Phase state survives a dashboard restart (internal/db/session_phases.go exists)
+- [ ] Operators can explore the dashboard without a live session (internal/demo/workflow.go exists)
+- [ ] BDD coverage proves the operator-facing behavior (tests/e2e/workflow_progress_test.go exists)
+- [ ] The epic is signed off and documented (docs/features/demo-4o4-acceptance.md exists)
 
 ## Mechanical hygiene
 

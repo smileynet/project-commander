@@ -8,59 +8,59 @@
   "total_relevant": 16,
   "percent": 25,
   "is_complete": false,
-  "next_action": "Address `AC1 stepper component: file internal/web/templates/workflow_progress.templ exists`: not found: internal/web/templates/workflow_progress.templ",
+  "next_action": "Address `Operators see workflow phase progression on the dashboard (internal/web/templates/workflow_progress.templ exists)`: not found: internal/web/templates/workflow_progress.templ",
   "criteria": [
     {
-      "text": "AC1 stepper component: file internal/web/templates/workflow_progress.templ exists",
+      "text": "Operators see workflow phase progression on the dashboard (internal/web/templates/workflow_progress.templ exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: internal/web/templates/workflow_progress.templ",
       "auto_check": "file_exists"
     },
     {
-      "text": "AC2/AC3 phase detection logic: file internal/workflow/detect.go exists",
+      "text": "The dashboard knows when phases transition (internal/workflow/detect.go exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: internal/workflow/detect.go",
       "auto_check": "file_exists"
     },
     {
-      "text": "AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists",
+      "text": "Phase transitions broadcast live to the dashboard (internal/workflow/tracker.go exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: internal/workflow/tracker.go",
       "auto_check": "file_exists"
     },
     {
-      "text": "AC4 command center badge: file internal/web/templates/command_center.templ exists",
+      "text": "The command center shows current phase per project (internal/web/templates/command_center.templ exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: internal/web/templates/command_center.templ",
       "auto_check": "file_exists"
     },
     {
-      "text": "AC6 persistence layer: file internal/db/session_phases.go exists",
+      "text": "Phase state survives a dashboard restart (internal/db/session_phases.go exists)",
       "user_checked": false,
       "status": "PASS",
       "detail": "found at internal/db/session_phases.go",
       "auto_check": "file_exists"
     },
     {
-      "text": "AC7 demo mode data: file internal/demo/workflow.go exists",
+      "text": "Operators can explore the dashboard without a live session (internal/demo/workflow.go exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: internal/demo/workflow.go",
       "auto_check": "file_exists"
     },
     {
-      "text": "BDD test coverage: file tests/e2e/workflow_progress_test.go exists",
+      "text": "BDD coverage proves the operator-facing behavior (tests/e2e/workflow_progress_test.go exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: tests/e2e/workflow_progress_test.go",
       "auto_check": "file_exists"
     },
     {
-      "text": "Acceptance doc published at docs/features/demo-4o4-acceptance.md",
+      "text": "The epic is signed off and documented (docs/features/demo-4o4-acceptance.md exists)",
       "user_checked": false,
       "status": "FAIL",
       "detail": "not found: docs/features/demo-4o4-acceptance.md",
@@ -123,5 +123,6 @@
       "auto_check": ""
     }
   ],
-  "observation": ""
+  "observation": "",
+  "target": "When this epic is done, an operator monitoring a Line Cook session sees the active workflow phase (PREP \u2192 COOK \u2192 SERVE \u2192 TIDY) at a glance on the dashboard, with live updates as phases transition. The command center shows the current phase per project. Demo mode supports exploration without a real session, and dashboard restart preserves phase state."
 }

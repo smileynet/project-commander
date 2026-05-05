@@ -423,6 +423,35 @@ looks at the checkboxes. Markdown chrome (`**bold**`, `*italic*`,
 `` `code` ``) inside the criterion text is stripped before pattern
 matching.
 
+### Target outcome
+
+A `## Target` section at any heading depth is parsed into the
+`DoDResult.target` field --- a single user-observable outcome statement
+the criteria support. Format:
+
+```markdown
+## Target
+
+When this is done, an operator monitoring a Line Cook session sees
+the active workflow phase (PREP → COOK → SERVE → TIDY) at a glance
+on the dashboard, with live updates as phases transition.
+```
+
+Optional leading prefixes are stripped: `Target:`, `When done:`,
+`When this is done:`, `Outcome:`, `Goal:`. The body is collapsed to
+a single paragraph (newlines removed) so terminal/markdown renderers
+can quote it without re-flowing.
+
+The target is surfaced at the top of every render output (terminal,
+markdown, JSON) and passed into `DoDInputs.target` for the LLM
+observer. The narrator is instructed to use the target's language
+when describing distance from completion, and is forbidden from
+enumerating which criteria passed or naming file paths.
+
+When no `## Target` section exists, `target` is the empty string;
+the renderers omit the target line and the LLM observer falls back
+to inferring outcome language from the criteria text.
+
 ### Status states
 
 Five outcomes per criterion, mapped onto the user's view of "done":
