@@ -122,11 +122,47 @@ class WeeklyOutput:
 		return len(self.week_in_review.strip()) >= 16
 
 
+@dataclass(frozen=True)
+class DoDInputs:
+	"""Per-project DoD state package handed to the LLM observer."""
+
+	project_name: str
+	branch: str | None
+	dirty: bool
+	uncommitted_count: int
+	ahead: int
+	behind: int
+	complete: int
+	outstanding: int
+	skipped: int
+	total_relevant: int
+	percent: int
+	is_complete: bool
+	next_action: str
+	# (text, status, detail, auto_check, user_checked) per criterion, source order
+	criteria: tuple[tuple[str, str, str, str, bool], ...]
+	# Last few commit subjects so the observer can ground "what's landed" claims
+	recent_commits: tuple[tuple[datetime, str], ...]
+
+
+@dataclass(frozen=True)
+class DoDOutput:
+	"""LLM-synthesized observation comparing current state to the DoD."""
+
+	observation: str
+
+	def is_usable(self) -> bool:
+		# 24 chars is enough room for a single concrete sentence; anything
+		# shorter is a degenerate response we should not surface.
+		return len(self.observation.strip()) >= 24
+
+
 class Narrator(Protocol):
 	"""LLM-or-equivalent that turns NarrativeInputs into prose, or None."""
 
 	def narrate(self, inputs: NarrativeInputs) -> NarrativeOutput | None: ...
 	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None: ...
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None: ...
 
 
 # ─── input collection ────────────────────────────────────────────────────────
@@ -419,6 +455,98 @@ def parse_weekly_response(text: str) -> WeeklyOutput | None:
 	return out if out.is_usable() else None
 
 
+_DOD_SYSTEM_PROMPT = (
+	"You observe a project's progress against its written Definition of Done. "
+	"You receive: the project's name, its current git state, the criteria list "
+	"(each with status PASS/FAIL/DONE/MANUAL/SKIP and a detail string), the "
+	"single most-blocking next_action the tool picked, and the most recent "
+	"commit subjects.\n"
+	"\n"
+	"Write one observation, 2-3 plain prose sentences, comparing the current "
+	"state to the defined criteria. The observation goes next to the mechanical "
+	"status table; do not duplicate that table in prose. Instead:\n"
+	"  - Reference specific criteria by their text (e.g. 'session_phases table "
+	"exists', 'BDD tests cover all 7 ACs') when describing where work landed.\n"
+	"  - Distinguish PASS (mechanically verified), DONE (user-confirmed by "
+	"ticking [x]), and MANUAL (awaiting user confirmation) when relevant.\n"
+	"  - Anchor 'what just happened' claims in the recent commit subjects when "
+	"there is a clear connection.\n"
+	"  - If the work is complete, name what shipped concretely. If it is in "
+	"flight, name the specific gap. If it is barely started, say so plainly.\n"
+	"\n"
+	"Rules:\n"
+	"  - Plain prose. No bullet lists. No markdown. No headings.\n"
+	"  - Total length <= 80 words.\n"
+	"  - No marketing language. No filler ('a robust solution', 'comprehensive').\n"
+	"  - Distinguish 'shipped' from 'attempted'. Do not invent criteria or "
+	"outcomes that are not in the inputs.\n"
+	"  - If the inputs are too thin for a defensible observation, write a "
+	"single sentence saying so.\n"
+	"\n"
+	"Output strictly as a JSON object with one string key: "
+	'{"observation": "..."}.'
+	" No prose before or after the JSON."
+)
+
+
+def build_dod_message(inputs: DoDInputs) -> str:
+	"""Render the DoD state as the LLM's user-message body."""
+	lines: list[str] = []
+	lines.append(f"# Project: {inputs.project_name}")
+	state_bits = [f"branch: {inputs.branch or '(no branch)'}"]
+	if inputs.dirty:
+		state_bits.append(f"dirty ({inputs.uncommitted_count} uncommitted)")
+	if inputs.ahead:
+		state_bits.append(f"{inputs.ahead} commits ahead of upstream")
+	if inputs.behind:
+		state_bits.append(f"{inputs.behind} commits behind upstream")
+	lines.append("State: " + ", ".join(state_bits))
+	lines.append("")
+
+	lines.append("## Definition of Done progress")
+	lines.append(
+		f"complete: {inputs.complete}/{inputs.total_relevant} "
+		f"({inputs.percent}%)  outstanding: {inputs.outstanding}  "
+		f"skipped: {inputs.skipped}  is_complete: {inputs.is_complete}"
+	)
+	lines.append(f"next_action: {inputs.next_action}")
+	lines.append("")
+
+	lines.append("## Criteria")
+	for text, status, detail, auto_check, user_checked in inputs.criteria:
+		marker = "[x]" if user_checked else "[ ]"
+		auto = f"  auto={auto_check}" if auto_check else ""
+		det = f"  detail={detail}" if detail else ""
+		lines.append(f"- {marker} {status:<6} {text}{auto}{det}")
+	lines.append("")
+
+	lines.append("## Recent commits (most recent first)")
+	if inputs.recent_commits:
+		for ts, summary in inputs.recent_commits:
+			lines.append(f"- {ts.strftime('%Y-%m-%d')}  {_one_line(summary)}")
+	else:
+		lines.append("(no commits yet)")
+	lines.append("")
+
+	return "\n".join(lines).rstrip() + "\n"
+
+
+def parse_dod_response(text: str) -> DoDOutput | None:
+	"""Best-effort parse of an LLM JSON payload into DoDOutput."""
+	body = _strip_code_fence(text.strip())
+	try:
+		payload = json.loads(body)
+	except json.JSONDecodeError:
+		return None
+	if not isinstance(payload, dict):
+		return None
+	v = payload.get("observation", "")
+	if not isinstance(v, str):
+		return None
+	out = DoDOutput(observation=v.strip())
+	return out if out.is_usable() else None
+
+
 def cache_root() -> Path:
 	base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
 	root = Path(base) / "project-commander" / "narrative"
@@ -499,6 +627,32 @@ class CachedNarrator:
 				pass
 		return out
 
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None:
+		root = self.root or cache_root()
+		prompt = build_dod_message(inputs)
+		key = cache_key(prompt, self.model + "::dod")
+		path = root / f"{key}.json"
+		if path.is_file():
+			try:
+				data = json.loads(path.read_text(encoding="utf-8"))
+				cached = DoDOutput(observation=data["observation"])
+				if cached.is_usable():
+					return cached
+			except (OSError, KeyError, json.JSONDecodeError, TypeError):
+				pass
+		out = self.inner.narrate_dod(inputs)
+		if out is not None and out.is_usable():
+			try:
+				path.write_text(json.dumps({
+					"observation": out.observation,
+					"model": self.model,
+					"kind": "dod",
+					"generated_at": datetime.now(tz=timezone.utc).isoformat(),
+				}, indent=2), encoding="utf-8")
+			except OSError:
+				pass
+		return out
+
 
 # ─── HTTP transport ──────────────────────────────────────────────────────────
 
@@ -566,6 +720,10 @@ class AnthropicNarrator:
 		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
 		return parse_weekly_response(text) if text is not None else None
 
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None:
+		text = self._chat(_DOD_SYSTEM_PROMPT, build_dod_message(inputs), max_tokens=512)
+		return parse_dod_response(text) if text is not None else None
+
 
 @dataclass
 class OpenAINarrator:
@@ -601,6 +759,10 @@ class OpenAINarrator:
 	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
 		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
 		return parse_weekly_response(text) if text is not None else None
+
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None:
+		text = self._chat(_DOD_SYSTEM_PROMPT, build_dod_message(inputs), max_tokens=512)
+		return parse_dod_response(text) if text is not None else None
 
 
 @dataclass
@@ -638,6 +800,10 @@ class OllamaNarrator:
 		text = self._chat(_WEEKLY_SYSTEM_PROMPT, build_weekly_message(inputs), max_tokens=512)
 		return parse_weekly_response(text) if text is not None else None
 
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None:
+		text = self._chat(_DOD_SYSTEM_PROMPT, build_dod_message(inputs), max_tokens=512)
+		return parse_dod_response(text) if text is not None else None
+
 
 @dataclass
 class DisabledNarrator:
@@ -647,6 +813,9 @@ class DisabledNarrator:
 		return None
 
 	def narrate_weekly(self, inputs: WeeklyInputs) -> WeeklyOutput | None:
+		return None
+
+	def narrate_dod(self, inputs: DoDInputs) -> DoDOutput | None:
 		return None
 
 

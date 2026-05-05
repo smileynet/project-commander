@@ -1,84 +1,127 @@
 {
-  "project": "wordcount",
+  "project": "line-cook-web",
   "file_path": "DOD.md",
   "file_exists": true,
   "complete": 4,
-  "outstanding": 6,
+  "outstanding": 12,
   "skipped": 0,
-  "total_relevant": 10,
-  "percent": 40,
+  "total_relevant": 16,
+  "percent": 25,
   "is_complete": false,
-  "next_action": "Address `Working tree clean`: 1 uncommitted file(s)",
+  "next_action": "Address `AC1 stepper component: file internal/web/templates/workflow_progress.templ exists`: not found: internal/web/templates/workflow_progress.templ",
   "criteria": [
+    {
+      "text": "AC1 stepper component: file internal/web/templates/workflow_progress.templ exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: internal/web/templates/workflow_progress.templ",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "AC2/AC3 phase detection logic: file internal/workflow/detect.go exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: internal/workflow/detect.go",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: internal/workflow/tracker.go",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "AC4 command center badge: file internal/web/templates/command_center.templ exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: internal/web/templates/command_center.templ",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "AC6 persistence layer: file internal/db/session_phases.go exists",
+      "user_checked": false,
+      "status": "PASS",
+      "detail": "found at internal/db/session_phases.go",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "AC7 demo mode data: file internal/demo/workflow.go exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: internal/demo/workflow.go",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "BDD test coverage: file tests/e2e/workflow_progress_test.go exists",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: tests/e2e/workflow_progress_test.go",
+      "auto_check": "file_exists"
+    },
+    {
+      "text": "Acceptance doc published at docs/features/demo-4o4-acceptance.md",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "not found: docs/features/demo-4o4-acceptance.md",
+      "auto_check": "file_exists"
+    },
     {
       "text": "Working tree clean",
       "user_checked": false,
-      "status": "FAIL",
-      "detail": "1 uncommitted file(s)",
+      "status": "PASS",
+      "detail": "",
       "auto_check": "working_tree_clean"
     },
     {
       "text": "Pushed to origin",
       "user_checked": false,
-      "status": "FAIL",
-      "detail": "origin/main: 1 ahead",
-      "auto_check": "branch_in_sync"
-    },
-    {
-      "text": "On main branch",
-      "user_checked": false,
       "status": "PASS",
-      "detail": "on main",
-      "auto_check": "branch_is_main"
+      "detail": "at parity with origin/main",
+      "auto_check": "branch_in_sync"
     },
     {
       "text": "All plan phases complete",
       "user_checked": false,
       "status": "FAIL",
-      "detail": "4 unchecked item(s), 3 open phase(s)",
+      "detail": "8 unchecked item(s), 5 open phase(s)",
       "auto_check": "plan_complete"
     },
     {
       "text": "Verify passes",
       "user_checked": false,
-      "status": "FAIL",
-      "detail": "2 verify check(s) failed: working_tree_clean, branch_in_sync",
+      "status": "PASS",
+      "detail": "5 of 5 checks passed (rest skipped)",
       "auto_check": "verify_all"
     },
     {
-      "text": "No orphan threads",
-      "user_checked": false,
-      "status": "PASS",
-      "detail": "",
-      "auto_check": "no_orphan_thread"
-    },
-    {
-      "text": "No plan-drift",
-      "user_checked": false,
-      "status": "PASS",
-      "detail": "",
-      "auto_check": "no_plan_drift"
-    },
-    {
-      "text": "Substantive prompts",
-      "user_checked": false,
-      "status": "PASS",
-      "detail": "",
-      "auto_check": "prompts_substantive"
-    },
-    {
-      "text": "User has reviewed the README",
+      "text": "Maitre BDD review APPROVED",
       "user_checked": false,
       "status": "MANUAL",
       "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
       "auto_check": ""
     },
     {
-      "text": "Smoke test runs end-to-end",
+      "text": "Sous-chef code quality review APPROVED",
+      "user_checked": false,
+      "status": "MANUAL",
+      "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
+      "auto_check": ""
+    },
+    {
+      "text": "Critic E2E coverage review PASS",
+      "user_checked": false,
+      "status": "MANUAL",
+      "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
+      "auto_check": ""
+    },
+    {
+      "text": "All 7 ACs verified end-to-end in browser",
       "user_checked": false,
       "status": "MANUAL",
       "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
       "auto_check": ""
     }
-  ]
+  ],
+  "observation": ""
 }

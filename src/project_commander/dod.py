@@ -75,6 +75,7 @@ class DoDResult:
 	file_exists: bool
 	criteria: tuple[Criterion, ...]
 	next_action: str = ""
+	observation: str = ""  # optional LLM-narrated state-vs-DoD summary
 
 	@property
 	def total_relevant(self) -> int:
@@ -145,16 +146,61 @@ def _check_verify_all(report: ProjectReport) -> CheckResult:
 	                   f"{len(failed)} verify check(s) failed: {names}")
 
 
+# ───── extra auto-check: file_exists ─────────────────────────────────────────
+
+# Match common phrasings of "this file exists":
+#   subject form:    "internal/foo.go exists", "PLAN.md exists", "the docs/foo.md is present"
+#   predicate form:  "exists at path/to/file", "published at docs/x.md", "located at internal/y"
+# Path token must contain a dot-extension OR a forward slash so we don't
+# accidentally pluck non-path nouns out of generic prose.
+_PATH_TOKEN = r"[\w./\-]*(?:/[\w.\-]+|\.[a-zA-Z]{1,8})"
+_FILE_EXISTS_RE = re.compile(
+	rf"\b(?:the\s+)?(?:file\s+|path\s+)?(?P<sub>{_PATH_TOKEN})\s+(?:file\s+|is\s+)?(?:exists?|present)\b"
+	rf"|\b(?:exists?|published|located|present)\s+at\s+(?P<pred>{_PATH_TOKEN})\b",
+	re.IGNORECASE,
+)
+
+
+def _extract_file_path(match: re.Match) -> str | None:
+	return match.group("sub") or match.group("pred")
+
+
+def _check_file_exists(report: ProjectReport, *, path: str) -> CheckResult:
+	"""Verify a path exists at the project root, with a path-escape guard."""
+	root = report.path.resolve()
+	target = (root / path).resolve()
+	# Reject paths that escape the project root via .. or absolute paths.
+	try:
+		target.relative_to(root)
+	except ValueError:
+		return CheckResult("file_exists", "SKIP",
+		                   f"path escapes project root: {path}")
+	if target.is_file():
+		return CheckResult("file_exists", "PASS", f"found at {path}")
+	if target.is_dir():
+		return CheckResult("file_exists", "PASS",
+		                   f"directory found at {path}")
+	return CheckResult("file_exists", "FAIL", f"not found: {path}")
+
+
 # ───── pattern registry ──────────────────────────────────────────────────────
 
+# Most checks are pure ProjectReport→CheckResult. The `file_exists` check
+# also needs the path extracted from the criterion, so the registry stores
+# an optional extractor that pulls it from the regex match. When extractor
+# is None, the check is called with just the report.
 @dataclass(frozen=True)
 class _Pattern:
 	name: str
 	regex: re.Pattern
-	check: Callable[[ProjectReport], CheckResult]
+	check: Callable[..., CheckResult]
+	# When set, the extractor returns the kwargs spread into `check`.
+	extract: Callable[[re.Match], dict] | None = None
 
 
 # Order matters: the first matching pattern wins. More specific phrases first.
+# `file_exists` lives at the END so it doesn't outrank a more specific
+# generic-state phrase that happens to mention a path.
 _PATTERNS: tuple[_Pattern, ...] = (
 	# All verify checks pass (must come before the individual ones; otherwise
 	# the substring "verify" inside a more specific phrase could be missed).
@@ -245,14 +291,24 @@ _PATTERNS: tuple[_Pattern, ...] = (
 		),
 		check=_check_substantive_prompts,
 	),
+	# A specific path exists at the project root. Lowest specificity in the
+	# registry: only fires when the criterion text carries a path-shaped
+	# token (with extension or `/`).
+	_Pattern(
+		name="file_exists",
+		regex=_FILE_EXISTS_RE,
+		check=_check_file_exists,
+		extract=lambda m: {"path": _extract_file_path(m)},
+	),
 )
 
 
-def match_pattern(text: str) -> _Pattern | None:
-	"""Return the first auto-check pattern whose regex matches `text`."""
+def match_pattern(text: str) -> tuple[_Pattern, re.Match] | None:
+	"""Return the first matching pattern and its match object, if any."""
 	for pat in _PATTERNS:
-		if pat.regex.search(text):
-			return pat
+		m = pat.regex.search(text)
+		if m is not None:
+			return pat, m
 	return None
 
 
@@ -341,15 +397,28 @@ def evaluate_items(report: ProjectReport,
 				status="DONE", detail="user-confirmed",
 			))
 			continue
-		pat = match_pattern(text)
-		if pat is None:
+		hit = match_pattern(text)
+		if hit is None:
 			out.append(Criterion(
 				text=text, user_checked=False,
 				status="MANUAL",
 				detail="no auto-check matched; mark `[x]` when you confirm by hand",
 			))
 			continue
-		cr = pat.check(report)
+		pat, m = hit
+		kwargs = pat.extract(m) if pat.extract else {}
+		# An extractor may yield None (e.g. neither named group matched).
+		# Treat that as a SKIP — the criterion looked auto-checkable but the
+		# tool couldn't pull the parameter out cleanly.
+		if any(v is None for v in kwargs.values()):
+			out.append(Criterion(
+				text=text, user_checked=False,
+				status="SKIP",
+				detail=f"{pat.name}: could not extract parameters from criterion",
+				auto_check=pat.name,
+			))
+			continue
+		cr = pat.check(report, **kwargs)
 		out.append(Criterion(
 			text=text, user_checked=False,
 			status=cr.status, detail=cr.detail, auto_check=pat.name,
@@ -372,8 +441,16 @@ def _next_action(criteria: Iterable[Criterion]) -> str:
 
 
 def evaluate(report: ProjectReport, *,
-             override_file: Path | None = None) -> DoDResult:
-	"""Build a complete `DoDResult` for one project."""
+             override_file: Path | None = None,
+             narrator=None) -> DoDResult:
+	"""Build a complete `DoDResult` for one project.
+
+	If a `narrator` is passed and supports `narrate_dod`, ask it for a 2-3
+	sentence observation comparing the current state to the criteria. Failures
+	(no provider, transport error, malformed JSON, too-short response) are
+	caught here so they never break the deterministic core; the result simply
+	carries `observation=""`.
+	"""
 	dod_path = find_dod_file(report.path, override=override_file)
 	if dod_path is None:
 		return DoDResult(
@@ -394,14 +471,68 @@ def evaluate(report: ProjectReport, *,
 		               "tool to track.")
 	else:
 		next_action = _next_action(criteria)
+
+	observation = _maybe_observe(report, criteria, next_action, narrator) if items else ""
+
 	return DoDResult(
 		project=report.name, file_path=rel_str, file_exists=True,
 		criteria=criteria, next_action=next_action,
+		observation=observation,
 	)
 
 
-def evaluate_all(reports: Iterable[ProjectReport]) -> list[DoDResult]:
-	return [evaluate(r) for r in reports]
+def _maybe_observe(report: ProjectReport,
+                   criteria: tuple[Criterion, ...],
+                   next_action: str,
+                   narrator) -> str:
+	"""Build DoDInputs and call the narrator, swallowing all failures."""
+	if narrator is None:
+		return ""
+	try:
+		from .narrative import DoDInputs
+	except ImportError:
+		return ""
+	complete = sum(1 for c in criteria if c.status in ("PASS", "DONE"))
+	outstanding = sum(1 for c in criteria if c.status in ("FAIL", "MANUAL"))
+	skipped = sum(1 for c in criteria if c.status == "SKIP")
+	total_relevant = complete + outstanding
+	percent = round(100 * complete / total_relevant) if total_relevant else 0
+	# Last 10 commit subjects, most recent first, for grounding the prose.
+	commits = sorted(
+		(s for s in report.signals if s.kind == "commit"),
+		key=lambda s: s.timestamp, reverse=True,
+	)[:10]
+	inputs = DoDInputs(
+		project_name=report.name,
+		branch=report.git_branch,
+		dirty=report.git_dirty,
+		uncommitted_count=len(report.git_uncommitted),
+		ahead=report.git_ahead,
+		behind=report.git_behind,
+		complete=complete,
+		outstanding=outstanding,
+		skipped=skipped,
+		total_relevant=total_relevant,
+		percent=percent,
+		is_complete=(outstanding == 0 and total_relevant > 0),
+		next_action=next_action,
+		criteria=tuple(
+			(c.text, c.status, c.detail, c.auto_check, c.user_checked)
+			for c in criteria
+		),
+		recent_commits=tuple((c.timestamp, c.summary) for c in commits),
+	)
+	try:
+		out = narrator.narrate_dod(inputs)
+	except Exception:
+		return ""
+	if out is None or not getattr(out, "is_usable", lambda: False)():
+		return ""
+	return out.observation
+
+
+def evaluate_all(reports: Iterable[ProjectReport], *, narrator=None) -> list[DoDResult]:
+	return [evaluate(r, narrator=narrator) for r in reports]
 
 
 # ───── rendering ─────────────────────────────────────────────────────────────
@@ -459,6 +590,9 @@ def render_terminal(result: DoDResult, console: Console) -> None:
 	if not result.is_complete:
 		console.print()
 		console.print(f"  [bold]Next:[/bold] {_rich_escape(result.next_action)}")
+	if result.observation:
+		console.print()
+		console.print(f"  [italic]Observation:[/italic] [dim]{_rich_escape(result.observation)}[/dim]")
 
 
 def render_fleet_terminal(results: list[DoDResult], console: Console) -> None:
@@ -530,6 +664,7 @@ def render_json(results: list[DoDResult] | DoDResult) -> str:
 				}
 				for c in r.criteria
 			],
+			"observation": r.observation,
 		}
 	if isinstance(results, DoDResult):
 		return json.dumps(to_dict(results), indent=2)
@@ -558,6 +693,9 @@ def render_markdown(results: list[DoDResult] | DoDResult) -> str:
 			text = c.text.replace("|", "\\|")
 			lines.append(f"| `{c.status}` | {text} | {detail} |")
 		lines.append("")
+		if r.observation:
+			lines.append(f"_Observation:_ {r.observation}")
+			lines.append("")
 		if not r.is_complete:
 			lines.append(f"**Next:** {r.next_action}")
 			lines.append("")
@@ -603,7 +741,9 @@ def run(args: argparse.Namespace) -> int:
 		      file=sys.stderr)
 		return 2
 
-	results = [evaluate(r, override_file=override) for r in reports]
+	from .cli import resolve_narrator
+	narrator = resolve_narrator(args)
+	results = [evaluate(r, override_file=override, narrator=narrator) for r in reports]
 
 	if args.format == "json":
 		if len(results) == 1:

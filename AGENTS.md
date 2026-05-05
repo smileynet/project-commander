@@ -461,6 +461,7 @@ Currently shipped:
 |`no_plan_drift`|"no plan-drift", "plan matches reality"|`verify._check_plan_drift`|
 |`plan_complete`|"plan complete", "all phases done", "every checkbox checked"|local check on `PlanDocSummary`|
 |`prompts_substantive`|"substantive prompts", "no procedural-only prompts"|`verify._check_substantive_prompts`|
+|`file_exists`|"path/to/file.ext exists", "published at docs/foo.md", "located at internal/bar"|local check; runtime guard rejects paths that escape the project root|
 
 Patterns are conservative on purpose: an unmatched criterion becomes
 `MANUAL` rather than risk a false `PASS`. False `MANUAL` is recoverable
@@ -502,10 +503,28 @@ and rely on `PASS`.
 |`dod`|fleet roll-up: one summary line per project that has a `DOD.md`; projects without are summarized at the bottom|
 |`dod --format markdown`|GFM table per project for `reports/` artifacts|
 
-`dod` does **not** invoke the LLM narrator. The criteria-by-criteria
-status is mechanical and deterministic by design --- a "did you ship?"
-answer that is reproducible turn-to-turn is the entire point of the
-feature.
+### LLM observation (advisory; never load-bearing)
+
+When a narrator is configured (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
+/ `OLLAMA_HOST` auto-detected; force off with `--no-llm`), `dod` calls
+`narrator.narrate_dod(inputs)` after the mechanical evaluation and
+surfaces a 2-3 sentence observation alongside the status table. The
+observation references specific criteria text and file paths from the
+user's own `DOD.md`, plus the most recent commit subjects.
+
+The mechanical status, the percent, the `next_action`, and the exit
+code are all unaffected by the narrator. Failures (no provider,
+transport error, malformed JSON, too-short response) are caught in
+`_maybe_observe` and the result simply carries `observation=""` —
+the deterministic core never breaks. The observation is content-cached
+under `$XDG_CACHE_HOME/project-commander/narrative/` keyed on
+`SHA-256(model_id + "::dod" + "\n--\n" + build_dod_message(inputs))`,
+so identical state + identical model returns byte-for-byte identical
+prose.
+
+Run with `--no-llm` to force fully deterministic output (the
+`expected-outputs/` snapshots in `examples/dod-walkthrough/` are
+captured this way for byte-exact reproducibility).
 
 `DOD.md` itself is **not** picked up by `DocsScanner`. The file is owned
 by the `dod` subcommand alone; treating it as a regular doc signal would

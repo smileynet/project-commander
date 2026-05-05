@@ -131,8 +131,10 @@ project-commander {report,tidy,catchup,verify,audit,recap,dod}
 | `audit` | Prompt-to-commit causality for a project: which substantive prompts converted into landed code, which orphaned, the prompt-to-commit ratio, and flags like `all-orphans` or `plan-drift`. |
 | `recap` | Per-project retrospective narrative across `--quarter`, `--year`, `--month`, or `--since N`. Categorizes activity (shipped / major arc / started but paused / quiet) and synthesizes a paragraph per project. |
 
-For a hands-on demonstration of `dod` driving a small feature from
-mid-flight to shipped, see the reproducible walkthrough at
+For a hands-on demonstration that replays a real shipped feature
+(line-cook-web's `demo-4o4` epic) against a concrete DoD with eight
+file-anchored acceptance criteria and four manual sign-offs, see the
+reproducible walkthrough at
 [`examples/dod-walkthrough/`](examples/dod-walkthrough/).
 
 ## How it shows up in your workflow

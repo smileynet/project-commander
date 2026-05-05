@@ -37,3 +37,7 @@ mark `[x]` when you confirm by hand
   Next: Address `AC1 stepper component: file 
 internal/web/templates/workflow_progress.templ exists`: not found: 
 internal/web/templates/workflow_progress.templ
+
+  Observation: AC7 demo mode data and BDD test coverage are the only new passed 
+criteria since last check, but AC1, AC3, and AC4 are still not met. The missing 
+files detail suggests these components need to be added or updated.

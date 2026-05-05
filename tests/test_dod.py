@@ -158,8 +158,9 @@ def test_match_pattern_recognizes_canonical_phrasings():
 		("all verify checks passing",                   "verify_all"),
 	]
 	for text, expected in cases:
-		pat = match_pattern(text)
-		assert pat is not None, f"no pattern matched: {text!r}"
+		hit = match_pattern(text)
+		assert hit is not None, f"no pattern matched: {text!r}"
+		pat, _ = hit
 		assert pat.name == expected, (
 			f"{text!r} matched {pat.name}, expected {expected}"
 		)
@@ -169,6 +170,168 @@ def test_match_pattern_returns_none_for_unknown_criteria():
 	assert match_pattern("Feature X documented in README") is None
 	assert match_pattern("Demoed to product owner") is None
 	assert match_pattern("Latency below 100ms") is None
+
+
+# ───── file_exists pattern ───────────────────────────────────────────────────
+
+def test_file_exists_recognizes_subject_form():
+	hit = match_pattern("docs/PLAN.md exists")
+	assert hit is not None
+	pat, m = hit
+	assert pat.name == "file_exists"
+	from project_commander.dod import _extract_file_path
+	assert _extract_file_path(m) == "docs/PLAN.md"
+
+
+def test_file_exists_recognizes_predicate_form():
+	hit = match_pattern("acceptance doc published at docs/features/foo.md")
+	assert hit is not None
+	pat, m = hit
+	assert pat.name == "file_exists"
+	from project_commander.dod import _extract_file_path
+	assert _extract_file_path(m) == "docs/features/foo.md"
+
+
+def test_file_exists_ignores_non_path_phrases():
+	# Should NOT match: no path-shaped token (no dot-extension, no slash).
+	assert match_pattern("the documentation exists somewhere") is None
+	assert match_pattern("everything is present and correct") is None
+
+
+def test_file_exists_check_pass(tmp_path: Path):
+	(tmp_path / "PLAN.md").write_text("hi")
+	r = _report(tmp_path)
+	out = evaluate_items(r, [("PLAN.md exists", False)])
+	assert out[0].status == "PASS"
+	assert out[0].auto_check == "file_exists"
+	assert "found at PLAN.md" in out[0].detail
+
+
+def test_file_exists_check_fail(tmp_path: Path):
+	r = _report(tmp_path)
+	out = evaluate_items(r, [("MISSING.md exists", False)])
+	assert out[0].status == "FAIL"
+	assert "not found" in out[0].detail
+
+
+def test_file_exists_nested_path(tmp_path: Path):
+	(tmp_path / "docs").mkdir()
+	(tmp_path / "docs" / "FEATURE.md").write_text("hi")
+	r = _report(tmp_path)
+	out = evaluate_items(r, [("acceptance doc published at docs/FEATURE.md", False)])
+	assert out[0].status == "PASS"
+	assert "docs/FEATURE.md" in out[0].detail
+
+
+def test_file_exists_directory_path_passes(tmp_path: Path):
+	# Directories also count — useful for "internal/web/templates exists" checks.
+	(tmp_path / "internal" / "web").mkdir(parents=True)
+	r = _report(tmp_path)
+	out = evaluate_items(r, [("internal/web exists", False)])
+	assert out[0].status == "PASS"
+	assert "directory" in out[0].detail
+
+
+def test_file_exists_strips_dotdot_prefix_via_regex(tmp_path: Path):
+	# `..` is not a word-boundary anchor; the regex extracts only the path tail.
+	# A criterion mentioning `../etc/passwd exists` is matched as `etc/passwd
+	# exists`, which fails because no such file exists inside the project.
+	r = _report(tmp_path)
+	out = evaluate_items(r, [("../etc/passwd exists", False)])
+	assert out[0].status == "FAIL"
+	assert "etc/passwd" in out[0].detail
+	# The path-escape guard itself is exercised in
+	# test_file_exists_rejects_explicit_escape below — that path goes through
+	# _check_file_exists directly, bypassing the regex stripping.
+
+
+def test_file_exists_rejects_explicit_escape(tmp_path: Path):
+	# When something does manage to construct a path that escapes the root
+	# (resolved symlink, edge-case extractor), the runtime guard SKIPs it.
+	from project_commander.dod import _check_file_exists
+	r = _report(tmp_path)
+	cr = _check_file_exists(r, path="../etc/passwd")
+	assert cr.status == "SKIP"
+	assert "escapes project root" in cr.detail
+
+
+# ───── narrator wiring ───────────────────────────────────────────────────────
+
+class _StubNarrator:
+	"""Returns a canned DoDOutput. Used to verify the wiring without HTTP."""
+
+	def __init__(self, observation: str):
+		from project_commander.narrative import DoDOutput
+		self._out = DoDOutput(observation=observation)
+		self.calls = 0
+
+	def narrate_dod(self, inputs):
+		self.calls += 1
+		# Sanity: narrator gets criteria with their evaluated statuses.
+		assert isinstance(inputs.criteria, tuple)
+		assert all(len(c) == 5 for c in inputs.criteria)
+		return self._out
+
+	def narrate(self, inputs): return None
+	def narrate_weekly(self, inputs): return None
+
+
+def test_narrator_observation_attached_when_provided(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n- [x] Reviewed\n")
+	narr = _StubNarrator("Tree is clean and the manual review is in. Nothing left to ship.")
+	result = evaluate(r, narrator=narr)
+	assert result.observation.startswith("Tree is clean")
+	assert narr.calls == 1
+
+
+def test_narrator_default_is_no_observation(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n")
+	result = evaluate(r)  # no narrator arg
+	assert result.observation == ""
+
+
+def test_narrator_failure_falls_back_silently(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n")
+
+	class _Boom:
+		def narrate_dod(self, inputs):
+			raise RuntimeError("provider exploded")
+		def narrate(self, inputs): return None
+		def narrate_weekly(self, inputs): return None
+
+	result = evaluate(r, narrator=_Boom())
+	assert result.observation == ""  # swallowed
+	assert result.complete >= 1       # mechanical core unaffected
+
+
+def test_narrator_too_short_observation_rejected(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n")
+	narr = _StubNarrator("hi")  # below is_usable() threshold
+	result = evaluate(r, narrator=narr)
+	assert result.observation == ""
+
+
+def test_narrator_observation_in_json_output(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n")
+	narr = _StubNarrator("Working tree is clean — the only mechanical check passes.")
+	result = evaluate(r, narrator=narr)
+	doc = json.loads(render_json(result))
+	assert doc["observation"].startswith("Working tree is clean")
+
+
+def test_narrator_observation_in_markdown_output(tmp_path: Path):
+	r = _report(tmp_path, git_dirty=False)
+	(tmp_path / "DOD.md").write_text("- [ ] Working tree clean\n")
+	narr = _StubNarrator("Tree is clean; nothing else defined yet beyond the one mechanical check.")
+	result = evaluate(r, narrator=narr)
+	out = render_markdown(result)
+	assert "_Observation:_" in out
+	assert "Tree is clean" in out
 
 
 # ───── auto-check evaluation ─────────────────────────────────────────────────

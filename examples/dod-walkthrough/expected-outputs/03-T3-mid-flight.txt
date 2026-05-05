@@ -1,29 +1,29 @@
 
 line-cook-web  DoD OPEN  DOD.md
 
-  [██████░░░░░░░░░░░░░░░░░░]  4/16  (25%)
+  [██████████████░░░░░░░░░░]  9/16  (56%)
 
-  [  FAIL]  AC1 stepper component: file 
-internal/web/templates/workflow_progress.templ exists  not found: 
+  [  PASS]  AC1 stepper component: file 
+internal/web/templates/workflow_progress.templ exists  found at 
 internal/web/templates/workflow_progress.templ
-  [  FAIL]  AC2/AC3 phase detection logic: file internal/workflow/detect.go 
-exists  not found: internal/workflow/detect.go
-  [  FAIL]  AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists 
-not found: internal/workflow/tracker.go
-  [  FAIL]  AC4 command center badge: file 
-internal/web/templates/command_center.templ exists  not found: 
+  [  PASS]  AC2/AC3 phase detection logic: file internal/workflow/detect.go 
+exists  found at internal/workflow/detect.go
+  [  PASS]  AC3 SSE broadcast tracker: file internal/workflow/tracker.go exists 
+found at internal/workflow/tracker.go
+  [  PASS]  AC4 command center badge: file 
+internal/web/templates/command_center.templ exists  found at 
 internal/web/templates/command_center.templ
   [  PASS]  AC6 persistence layer: file internal/db/session_phases.go exists  
 found at internal/db/session_phases.go
   [  FAIL]  AC7 demo mode data: file internal/demo/workflow.go exists  not 
 found: internal/demo/workflow.go
-  [  FAIL]  BDD test coverage: file tests/e2e/workflow_progress_test.go exists  
-not found: tests/e2e/workflow_progress_test.go
+  [  PASS]  BDD test coverage: file tests/e2e/workflow_progress_test.go exists  
+found at tests/e2e/workflow_progress_test.go
   [  FAIL]  Acceptance doc published at docs/features/demo-4o4-acceptance.md  
 not found: docs/features/demo-4o4-acceptance.md
   [  PASS]  Working tree clean
   [  PASS]  Pushed to origin  at parity with origin/main
-  [  FAIL]  All plan phases complete  8 unchecked item(s), 5 open phase(s)
+  [  FAIL]  All plan phases complete  2 unchecked item(s), 1 open phase(s)
   [  PASS]  Verify passes  5 of 5 checks passed (rest skipped)
   [MANUAL]  Maitre BDD review APPROVED  no auto-check matched; mark `[x]` when 
 you confirm by hand
@@ -34,6 +34,5 @@ when you confirm by hand
   [MANUAL]  All 7 ACs verified end-to-end in browser  no auto-check matched; 
 mark `[x]` when you confirm by hand
 
-  Next: Address `AC1 stepper component: file 
-internal/web/templates/workflow_progress.templ exists`: not found: 
-internal/web/templates/workflow_progress.templ
+  Next: Address `AC7 demo mode data: file internal/demo/workflow.go exists`: not
+found: internal/demo/workflow.go
