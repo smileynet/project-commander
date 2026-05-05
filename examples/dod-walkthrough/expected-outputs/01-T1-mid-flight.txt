@@ -1,0 +1,20 @@
+
+wordcount  DoD OPEN  DOD.md
+
+  [██████████░░░░░░░░░░░░░░]  4/10  (40%)
+
+  [  FAIL]  Working tree clean  1 uncommitted file(s)
+  [  FAIL]  Pushed to origin  origin/main: 1 ahead
+  [  PASS]  On main branch  on main
+  [  FAIL]  All plan phases complete  4 unchecked item(s), 3 open phase(s)
+  [  FAIL]  Verify passes  2 verify check(s) failed: working_tree_clean, 
+branch_in_sync
+  [  PASS]  No orphan threads
+  [  PASS]  No plan-drift
+  [  PASS]  Substantive prompts
+  [MANUAL]  User has reviewed the README  no auto-check matched; mark `[x]` when
+you confirm by hand
+  [MANUAL]  Smoke test runs end-to-end  no auto-check matched; mark `[x]` when 
+you confirm by hand
+
+  Next: Address `Working tree clean`: 1 uncommitted file(s)

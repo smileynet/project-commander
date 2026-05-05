@@ -1,0 +1,15 @@
+
+wordcount  DoD DONE  DOD.md
+
+  [████████████████████████]  10/10  (100%)
+
+  [  PASS]  Working tree clean
+  [  PASS]  Pushed to origin  at parity with origin/main
+  [  PASS]  On main branch  on main
+  [  PASS]  All plan phases complete  all checkboxes ticked, all phases complete
+  [  PASS]  Verify passes  5 of 5 checks passed (rest skipped)
+  [  PASS]  No orphan threads
+  [  PASS]  No plan-drift
+  [  PASS]  Substantive prompts
+  [  DONE]  User has reviewed the README  user-confirmed
+  [  DONE]  Smoke test runs end-to-end  user-confirmed

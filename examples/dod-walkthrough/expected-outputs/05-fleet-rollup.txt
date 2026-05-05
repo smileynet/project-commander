@@ -1,0 +1,8 @@
+
+  OPEN  [░░░░░░░░░░░░]  0/3  api-rewrite  Address `Working tree clean`: 1 
+uncommitted file(s)
+  DONE  [████████████]  10/10  wordcount  Definition of Done met.
+
+1 of 2 project(s) with DOD.md are complete.
+1 project(s) have no DOD.md: quiet-tool
+

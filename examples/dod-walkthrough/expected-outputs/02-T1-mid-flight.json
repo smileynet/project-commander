@@ -1,0 +1,84 @@
+{
+  "project": "wordcount",
+  "file_path": "DOD.md",
+  "file_exists": true,
+  "complete": 4,
+  "outstanding": 6,
+  "skipped": 0,
+  "total_relevant": 10,
+  "percent": 40,
+  "is_complete": false,
+  "next_action": "Address `Working tree clean`: 1 uncommitted file(s)",
+  "criteria": [
+    {
+      "text": "Working tree clean",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "1 uncommitted file(s)",
+      "auto_check": "working_tree_clean"
+    },
+    {
+      "text": "Pushed to origin",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "origin/main: 1 ahead",
+      "auto_check": "branch_in_sync"
+    },
+    {
+      "text": "On main branch",
+      "user_checked": false,
+      "status": "PASS",
+      "detail": "on main",
+      "auto_check": "branch_is_main"
+    },
+    {
+      "text": "All plan phases complete",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "4 unchecked item(s), 3 open phase(s)",
+      "auto_check": "plan_complete"
+    },
+    {
+      "text": "Verify passes",
+      "user_checked": false,
+      "status": "FAIL",
+      "detail": "2 verify check(s) failed: working_tree_clean, branch_in_sync",
+      "auto_check": "verify_all"
+    },
+    {
+      "text": "No orphan threads",
+      "user_checked": false,
+      "status": "PASS",
+      "detail": "",
+      "auto_check": "no_orphan_thread"
+    },
+    {
+      "text": "No plan-drift",
+      "user_checked": false,
+      "status": "PASS",
+      "detail": "",
+      "auto_check": "no_plan_drift"
+    },
+    {
+      "text": "Substantive prompts",
+      "user_checked": false,
+      "status": "PASS",
+      "detail": "",
+      "auto_check": "prompts_substantive"
+    },
+    {
+      "text": "User has reviewed the README",
+      "user_checked": false,
+      "status": "MANUAL",
+      "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
+      "auto_check": ""
+    },
+    {
+      "text": "Smoke test runs end-to-end",
+      "user_checked": false,
+      "status": "MANUAL",
+      "detail": "no auto-check matched; mark `[x]` when you confirm by hand",
+      "auto_check": ""
+    }
+  ]
+}
